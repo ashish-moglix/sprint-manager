@@ -1,137 +1,139 @@
-import sqlite3
+import os
+import pymongo
 import pandas as pd
 import streamlit as st
+from bson import ObjectId
 
-DB_NAME = 'em_v10_final.db'
+# Load MongoDB connection URI from environment variable, with fallback
+MONGO_URI = os.environ.get(
+    "MONGO_URI",
+    "mongodb://localhost:27017/sprint-cockpit"
+)
 
-def get_connection():
-    """Get connection to SQLite database."""
-    return sqlite3.connect(DB_NAME, check_same_thread=False)
+def get_mongo_db():
+    """Get MongoDB database connection."""
+    client = pymongo.MongoClient(MONGO_URI)
+    return client.get_default_database()
+
+def get_collection_df(collection_name):
+    """Retrieve collection content as a pandas DataFrame."""
+    db = get_mongo_db()
+    cursor = db[collection_name].find()
+    df = pd.DataFrame(list(cursor))
+    if not df.empty:
+        df['id'] = df['_id'].astype(str)
+    return df
 
 def init_db():
-    """Initialize database tables and default team members."""
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS team (id INTEGER PRIMARY KEY, name TEXT, role TEXT, daily_sp REAL)')
-    c.execute('CREATE TABLE IF NOT EXISTS sprints (id INTEGER PRIMARY KEY, name TEXT, start_date DATE, end_date DATE, status TEXT)')
-    c.execute('CREATE TABLE IF NOT EXISTS backlog (id INTEGER PRIMARY KEY, sprint_id INTEGER, ticket_id TEXT, title TEXT, assignee TEXT, role TEXT, category TEXT, sp REAL)')
-    c.execute('CREATE TABLE IF NOT EXISTS leaves (id INTEGER PRIMARY KEY, name TEXT, reason TEXT, start_date DATE, end_date DATE, total_days INTEGER)')
-    c.execute('CREATE TABLE IF NOT EXISTS holidays (id INTEGER PRIMARY KEY, holiday_date DATE, description TEXT)')
-
-    # Migration for team table capacity buffers
-    for col, dtype in [('bug_p', 'REAL DEFAULT 15.0'), ('adhoc_p', 'REAL DEFAULT 10.0'), ('ceremony_p', 'REAL DEFAULT 10.0')]:
-        try:
-            c.execute(f"ALTER TABLE team ADD COLUMN {col} {dtype}")
-        except sqlite3.OperationalError:
-            pass
-
-    for col, dtype in [('start_date', 'DATE'), ('end_date', 'DATE'), ("status", "TEXT DEFAULT 'Todo'")]:
-        try:
-            c.execute(f"ALTER TABLE backlog ADD COLUMN {col} {dtype}")
-        except sqlite3.OperationalError:
-            pass
-
-    try:
-        c.execute("ALTER TABLE leaves ADD COLUMN sprint_id INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        c.execute("ALTER TABLE holidays ADD COLUMN sprint_id INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        c.execute("ALTER TABLE backlog ADD COLUMN actual_sp REAL")
-    except sqlite3.OperationalError:
-        pass
-
-    c.execute("SELECT COUNT(*) FROM team")
-    if c.fetchone()[0] == 0:
+    """Initialize default team members in MongoDB if empty."""
+    db = get_mongo_db()
+    if db['team'].count_documents({}) == 0:
         members = [
-            ('Partha', 'Backend', 2.0, 15.0, 10.0, 10.0),
-            ('Kanchan', 'Backend', 2.0, 15.0, 10.0, 10.0),
-            ('Govind', 'Backend', 2.0, 15.0, 10.0, 10.0),
-            ('Biswajit', 'Backend', 2.0, 15.0, 10.0, 10.0),
-            ('Rohit', 'Backend', 2.0, 15.0, 10.0, 10.0),
-            ('Shashi', 'Frontend', 2.0, 15.0, 10.0, 10.0),
-            ('Junaid', 'Frontend', 2.0, 15.0, 10.0, 10.0),
-            ('Kabir', 'Frontend', 2.0, 15.0, 10.0, 10.0),
-            ('Meenakshi', 'QA', 2.0, 15.0, 10.0, 10.0),
-            ('Kuldeep', 'QA', 2.0, 15.0, 10.0, 10.0),
-            ('Ashish', 'Backend', 2.0, 15.0, 10.0, 10.0)
+            {"name": 'Partha', "role": 'Backend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Kanchan', "role": 'Backend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Govind', "role": 'Backend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Biswajit', "role": 'Backend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Rohit', "role": 'Backend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Shashi', "role": 'Frontend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Junaid', "role": 'Frontend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Kabir', "role": 'Frontend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Meenakshi', "role": 'QA', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Kuldeep', "role": 'QA', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0},
+            {"name": 'Ashish', "role": 'Backend', "daily_sp": 2.0, "bug_p": 15.0, "adhoc_p": 10.0, "ceremony_p": 10.0}
         ]
-        c.executemany("INSERT INTO team (name, role, daily_sp, bug_p, adhoc_p, ceremony_p) VALUES (?,?,?,?,?,?)", members)
-    conn.commit()
-    conn.close()
+        db['team'].insert_many(members)
 
 # --- CACHED READ OPERATIONS ---
 
 @st.cache_data(ttl="15m")
 def get_sprints():
-    """Load all sprints from the database."""
-    conn = get_connection()
-    df = pd.read_sql("SELECT * FROM sprints ORDER BY id DESC", conn)
-    conn.close()
+    """Load all sprints from MongoDB."""
+    df = get_collection_df('sprints')
+    if not df.empty:
+        df = df.sort_values(by='name', ascending=False)
+    else:
+        df = pd.DataFrame(columns=['id', 'name', 'start_date', 'end_date', 'status'])
     return df
 
 @st.cache_data(ttl="15m")
 def get_team():
-    """Load the full team roster."""
-    conn = get_connection()
-    df = pd.read_sql("SELECT * FROM team", conn)
-    conn.close()
+    """Load the full team roster from MongoDB."""
+    df = get_collection_df('team')
+    if df.empty:
+        df = pd.DataFrame(columns=['id', 'name', 'role', 'daily_sp', 'bug_p', 'adhoc_p', 'ceremony_p'])
     return df
 
 @st.cache_data(ttl="15m")
 def get_leaves(sprint_id):
     """Load leaves related to a specific sprint or global ones."""
-    conn = get_connection()
-    df = pd.read_sql(f"SELECT * FROM leaves WHERE sprint_id={sprint_id} OR sprint_id=0", conn)
-    conn.close()
+    db = get_mongo_db()
+    cursor = db['leaves'].find({"$or": [{"sprint_id": str(sprint_id)}, {"sprint_id": 0}, {"sprint_id": "0"}]})
+    df = pd.DataFrame(list(cursor))
+    if not df.empty:
+        df['id'] = df['_id'].astype(str)
+    else:
+        df = pd.DataFrame(columns=['id', 'name', 'reason', 'start_date', 'end_date', 'total_days', 'sprint_id'])
     return df
 
 @st.cache_data(ttl="15m")
 def get_leaves_with_sprints():
     """Load all leaves along with sprint name."""
-    conn = get_connection()
-    df = pd.read_sql("""
-        SELECT l.id, l.name, s.name as sprint, l.reason, l.start_date, l.end_date, l.total_days
-        FROM leaves l
-        LEFT JOIN sprints s ON l.sprint_id = s.id
-        ORDER BY l.sprint_id DESC, l.name
-    """, conn)
-    conn.close()
-    return df
+    leaves_df = get_collection_df('leaves')
+    sprints_df = get_collection_df('sprints')
+    if leaves_df.empty:
+        return pd.DataFrame(columns=['id', 'name', 'sprint', 'reason', 'start_date', 'end_date', 'total_days'])
+    if sprints_df.empty:
+        leaves_df['sprint'] = "Unknown"
+    else:
+        sprints_df_renamed = sprints_df[['id', 'name']].rename(columns={'name': 'sprint_name', 'id': 'sprint_id'})
+        leaves_df['sprint_id_str'] = leaves_df['sprint_id'].astype(str)
+        sprints_df_renamed['sprint_id_str'] = sprints_df_renamed['sprint_id'].astype(str)
+        merged = pd.merge(leaves_df, sprints_df_renamed, on='sprint_id_str', how='left')
+        leaves_df['sprint'] = merged['sprint_name'].fillna('Global')
+    return leaves_df[['id', 'name', 'sprint', 'reason', 'start_date', 'end_date', 'total_days']]
 
 @st.cache_data(ttl="15m")
 def get_holidays(sprint_id, s_start, s_end):
     """Load holidays that fall within a sprint range."""
-    conn = get_connection()
-    query = f"SELECT * FROM holidays WHERE sprint_id={sprint_id} AND holiday_date BETWEEN '{s_start}' AND '{s_end}'"
-    df = pd.read_sql(query, conn)
-    conn.close()
+    db = get_mongo_db()
+    cursor = db['holidays'].find({
+        "sprint_id": str(sprint_id),
+        "holiday_date": {"$gte": str(s_start), "$lte": str(s_end)}
+    })
+    df = pd.DataFrame(list(cursor))
+    if not df.empty:
+        df['id'] = df['_id'].astype(str)
+    else:
+        df = pd.DataFrame(columns=['id', 'holiday_date', 'description', 'sprint_id'])
     return df
 
 @st.cache_data(ttl="15m")
 def get_all_holidays():
     """Load all holidays along with sprint name."""
-    conn = get_connection()
-    df = pd.read_sql("""
-        SELECT h.id, h.holiday_date, h.description, s.name as sprint
-        FROM holidays h
-        LEFT JOIN sprints s ON h.sprint_id = s.id
-        ORDER BY h.holiday_date
-    """, conn)
-    conn.close()
-    return df
+    hols_df = get_collection_df('holidays')
+    sprints_df = get_collection_df('sprints')
+    if hols_df.empty:
+        return pd.DataFrame(columns=['id', 'holiday_date', 'description', 'sprint'])
+    if sprints_df.empty:
+        hols_df['sprint'] = "Unknown"
+    else:
+        sprints_df_renamed = sprints_df[['id', 'name']].rename(columns={'name': 'sprint_name', 'id': 'sprint_id'})
+        hols_df['sprint_id_str'] = hols_df['sprint_id'].astype(str)
+        sprints_df_renamed['sprint_id_str'] = sprints_df_renamed['sprint_id'].astype(str)
+        merged = pd.merge(hols_df, sprints_df_renamed, on='sprint_id_str', how='left')
+        hols_df['sprint'] = merged['sprint_name'].fillna('Global')
+    return hols_df[['id', 'holiday_date', 'description', 'sprint']]
 
 @st.cache_data(ttl="15m")
 def get_backlog(sprint_id):
     """Load backlog tickets for a specific sprint."""
-    conn = get_connection()
-    df = pd.read_sql(f"SELECT * FROM backlog WHERE sprint_id={sprint_id}", conn)
-    conn.close()
+    db = get_mongo_db()
+    cursor = db['backlog'].find({"sprint_id": str(sprint_id)})
+    df = pd.DataFrame(list(cursor))
+    if not df.empty:
+        df['id'] = df['_id'].astype(str)
+    else:
+        df = pd.DataFrame(columns=['id', 'sprint_id', 'ticket_id', 'title', 'assignee', 'role', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date'])
     return df
 
 # --- MUTATION OPERATIONS (Mutate database and clear cache) ---
@@ -141,154 +143,164 @@ def clear_db_caches():
     st.cache_data.clear()
 
 def add_ticket(sprint_id, ticket_id, title, assignee, role, category, sp):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO backlog (sprint_id, ticket_id, title, assignee, role, category, sp) VALUES (?,?,?,?,?,?,?)",
-        (int(sprint_id), ticket_id, title, assignee, role, category, float(sp))
-    )
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['backlog'].insert_one({
+        "sprint_id": str(sprint_id),
+        "ticket_id": ticket_id,
+        "title": title,
+        "assignee": assignee,
+        "role": role,
+        "category": category,
+        "sp": float(sp),
+        "actual_sp": 0.0,
+        "status": "Todo",
+        "start_date": None,
+        "end_date": None
+    })
     clear_db_caches()
 
 def update_ticket(idx, ticket_id, title, assignee, category, sp, actual_sp, status, start_date, end_date):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        """UPDATE backlog SET ticket_id=?, title=?, assignee=?, category=?, sp=?, actual_sp=?, status=?, start_date=?, end_date=? WHERE id=?""",
-        (ticket_id, title, assignee, category, float(sp), float(actual_sp or 0), status, start_date, end_date, int(idx))
+    db = get_mongo_db()
+    db['backlog'].update_one(
+        {"_id": ObjectId(idx)},
+        {"$set": {
+            "ticket_id": ticket_id,
+            "title": title,
+            "assignee": assignee,
+            "category": category,
+            "sp": float(sp),
+            "actual_sp": float(actual_sp or 0.0),
+            "status": status,
+            "start_date": start_date,
+            "end_date": end_date
+        }}
     )
-    conn.commit()
-    conn.close()
     clear_db_caches()
 
 def delete_ticket(ticket_id):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM backlog WHERE ticket_id=?", (ticket_id,))
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['backlog'].delete_one({"ticket_id": ticket_id})
     clear_db_caches()
 
 def add_leave(name, reason, start_date, end_date, total_days, sprint_id):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO leaves (name, reason, start_date, end_date, total_days, sprint_id) VALUES (?,?,?,?,?,?)",
-        (name, reason, str(start_date), str(end_date), int(total_days), int(sprint_id))
-    )
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['leaves'].insert_one({
+        "name": name,
+        "reason": reason,
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "total_days": int(total_days),
+        "sprint_id": str(sprint_id)
+    })
     clear_db_caches()
 
 def update_leave(idx, name, reason, start_date, end_date, total_days):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        "UPDATE leaves SET name=?, reason=?, start_date=?, end_date=?, total_days=? WHERE id=?",
-        (name, reason, str(start_date), str(end_date), int(total_days), int(idx))
+    db = get_mongo_db()
+    db['leaves'].update_one(
+        {"_id": ObjectId(idx)},
+        {"$set": {
+            "name": name,
+            "reason": reason,
+            "start_date": str(start_date),
+            "end_date": str(end_date),
+            "total_days": int(total_days)
+        }}
     )
-    conn.commit()
-    conn.close()
     clear_db_caches()
 
 def delete_leave(leave_id):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM leaves WHERE id=?", (int(leave_id),))
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['leaves'].delete_one({"_id": ObjectId(leave_id)})
     clear_db_caches()
 
 def add_holiday(holiday_date, description, sprint_id):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO holidays (holiday_date, description, sprint_id) VALUES (?,?,?)",
-        (str(holiday_date), description, int(sprint_id))
-    )
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['holidays'].insert_one({
+        "holiday_date": str(holiday_date),
+        "description": description,
+        "sprint_id": str(sprint_id)
+    })
     clear_db_caches()
 
 def update_holiday(idx, holiday_date, description):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        "UPDATE holidays SET holiday_date=?, description=? WHERE id=?",
-        (str(holiday_date), description, int(idx))
+    db = get_mongo_db()
+    db['holidays'].update_one(
+        {"_id": ObjectId(idx)},
+        {"$set": {
+            "holiday_date": str(holiday_date),
+            "description": description
+        }}
     )
-    conn.commit()
-    conn.close()
     clear_db_caches()
 
 def delete_holiday(holiday_id):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM holidays WHERE id=?", (int(holiday_id),))
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['holidays'].delete_one({"_id": ObjectId(holiday_id)})
     clear_db_caches()
 
 def add_team_member(name, role, bug_p=15.0, adhoc_p=10.0, ceremony_p=10.0):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("INSERT INTO team (name, role, daily_sp, bug_p, adhoc_p, ceremony_p) VALUES (?,?,?,?,?,?)", (name, role, 2.0, float(bug_p), float(adhoc_p), float(ceremony_p)))
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['team'].insert_one({
+        "name": name,
+        "role": role,
+        "daily_sp": 2.0,
+        "bug_p": float(bug_p),
+        "adhoc_p": float(adhoc_p),
+        "ceremony_p": float(ceremony_p)
+    })
     clear_db_caches()
 
 def update_team_member(idx, name, role, daily_sp, bug_p, adhoc_p, ceremony_p):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        "UPDATE team SET name=?, role=?, daily_sp=?, bug_p=?, adhoc_p=?, ceremony_p=? WHERE id=?",
-        (name, role, float(daily_sp), float(bug_p), float(adhoc_p), float(ceremony_p), int(idx))
+    db = get_mongo_db()
+    db['team'].update_one(
+        {"_id": ObjectId(idx)},
+        {"$set": {
+            "name": name,
+            "role": role,
+            "daily_sp": float(daily_sp),
+            "bug_p": float(bug_p),
+            "adhoc_p": float(adhoc_p),
+            "ceremony_p": float(ceremony_p)
+        }}
     )
-    conn.commit()
-    conn.close()
     clear_db_caches()
 
 def delete_team_member(member_id):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM team WHERE id=?", (int(member_id),))
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['team'].delete_one({"_id": ObjectId(member_id)})
     clear_db_caches()
 
 def launch_sprint(name, start_date, end_date):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("UPDATE sprints SET status='Archived' WHERE status='Active'")
-    c.execute("INSERT INTO sprints (name, start_date, end_date, status) VALUES (?,?,?, 'Active')", (name, str(start_date), str(end_date)))
-    conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    db['sprints'].update_many({"status": "Active"}, {"$set": {"status": "Archived"}})
+    db['sprints'].insert_one({
+        "name": name,
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "status": "Active"
+    })
     clear_db_caches()
 
 def update_sprint(idx, name, start_date, end_date, status):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        "UPDATE sprints SET name=?, start_date=?, end_date=?, status=? WHERE id=?",
-        (name, str(start_date), str(end_date), status, int(idx))
+    db = get_mongo_db()
+    db['sprints'].update_one(
+        {"_id": ObjectId(idx)},
+        {"$set": {
+            "name": name,
+            "start_date": str(start_date),
+            "end_date": str(end_date),
+            "status": status
+        }}
     )
-    conn.commit()
-    conn.close()
     clear_db_caches()
 
 def delete_sprint(sprint_name):
-    conn = get_connection()
-    c = conn.cursor()
-    # Find ID first to cascade
-    c.execute("SELECT id FROM sprints WHERE name=?", (sprint_name,))
-    row = c.fetchone()
-    if row:
-        sid = int(row[0])
-        c.execute("DELETE FROM backlog WHERE sprint_id=?", (sid,))
-        c.execute("DELETE FROM leaves WHERE sprint_id=?", (sid,))
-        c.execute("DELETE FROM holidays WHERE sprint_id=?", (sid,))
-        c.execute("DELETE FROM sprints WHERE id=?", (sid,))
-        conn.commit()
-    conn.close()
+    db = get_mongo_db()
+    spr = db['sprints'].find_one({"name": sprint_name})
+    if spr:
+        sid = str(spr['_id'])
+        db['backlog'].delete_many({"sprint_id": sid})
+        db['leaves'].delete_many({"sprint_id": sid})
+        db['holidays'].delete_many({"sprint_id": sid})
+        db['sprints'].delete_one({"_id": spr['_id']})
     clear_db_caches()
