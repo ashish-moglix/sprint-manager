@@ -1,0 +1,9 @@
+__pycache__/*
+.streamlit/*
+*.pyc
+.agent/*
+.claude/*
+.env
+.venv
+*.db
+.agents/skills/developing-with-streamlit
