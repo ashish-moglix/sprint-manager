@@ -196,7 +196,7 @@ else:
 
                 burn_rows = []
                 for d in sprint_days:
-                    d_done = done_tasks[pd.to_datetime(done_tasks['end_date']).dt.date <= d.date()] if not done_tasks.empty else pd.DataFrame()
+                    d_done = done_tasks[pd.to_datetime(done_tasks['end_date'], errors='coerce').dt.normalize() <= pd.Timestamp(d.date())] if not done_tasks.empty else pd.DataFrame()
                     completed_by = d_done['sp'].sum() if not d_done.empty else 0
                     actual = total_sp - completed_by
                     idx = (d - s_start_dt).days
@@ -535,8 +535,14 @@ else:
                 if spr_tasks.empty:
                     continue
                 
-                s_start = pd.to_datetime(spr.get('actual_start_date') or spr['start_date'])
-                s_end = pd.to_datetime(spr.get('actual_end_date') or spr['end_date'])
+                s_start_raw = spr.get('actual_start_date') or spr.get('start_date')
+                s_end_raw = spr.get('actual_end_date') or spr.get('end_date')
+                if not s_start_raw or not s_end_raw:
+                    continue
+                s_start = pd.to_datetime(s_start_raw, errors='coerce')
+                s_end = pd.to_datetime(s_end_raw, errors='coerce')
+                if pd.isna(s_start) or pd.isna(s_end):
+                    continue
                 work_days_list = pd.bdate_range(s_start, s_end)
                 if len(work_days_list) <= 1:
                     continue
@@ -557,7 +563,7 @@ else:
                 total_days = len(work_days_list) - 1
                 for idx, day in enumerate(work_days_list[1:], start=1):
                     if not done_tasks.empty:
-                        completed_by = done_tasks[pd.to_datetime(done_tasks['end_date']).dt.date <= day.date()]['sp'].sum()
+                        completed_by = done_tasks[pd.to_datetime(done_tasks['end_date'], errors='coerce').dt.normalize() <= pd.Timestamp(day.date())]['sp'].sum()
                     else:
                         completed_by = 0
                         

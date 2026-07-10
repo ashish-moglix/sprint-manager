@@ -26,7 +26,7 @@ if "token" not in st.session_state:
 if "user" not in st.session_state:
     st.session_state.user = None
 
-def get_token_from_cookies():
+def get_token_from_cookies() -> str | None:
     headers = st.context.headers
     cookie_str = headers.get("cookie") or headers.get("Cookie") or ""
     cookie = SimpleCookie()
@@ -34,6 +34,19 @@ def get_token_from_cookies():
     if "sprint_cockpit_token" in cookie:
         return urllib.parse.unquote(cookie["sprint_cockpit_token"].value)
     return None
+
+def get_theme_from_cookies() -> str:
+    headers = st.context.headers
+    cookie_str = headers.get("cookie") or headers.get("Cookie") or ""
+    cookie = SimpleCookie()
+    cookie.load(cookie_str)
+    if "sprint_cockpit_theme" in cookie:
+        val = cookie["sprint_cockpit_theme"].value
+        return val if val in ("light", "dark") else "light"
+    return "light"
+
+if "theme" not in st.session_state:
+    st.session_state.theme = get_theme_from_cookies()
 
 # Read token from cookies if not in session state
 if not st.session_state.user:
@@ -63,6 +76,19 @@ if not st.session_state.user:
                 }
             </script></svg>
         """, unsafe_allow_html=True)
+
+# Restore theme from localStorage into a cookie so Python can read it on next load
+if "theme" not in st.session_state or st.session_state.theme == "light":
+    st.markdown("""
+        <svg style="display:none;"><script>
+            var saved = localStorage.getItem('sprint_cockpit_theme');
+            if (saved && saved !== 'light') {
+                document.cookie = 'sprint_cockpit_theme=' + saved + '; path=/; max-age=86400; SameSite=Lax';
+                location.reload();
+            }
+        </script></svg>
+    """, unsafe_allow_html=True)
+
 
 # Custom styling for premium aesthetic
 st.markdown("""
@@ -173,7 +199,43 @@ else:
         unsafe_allow_html=True
     )
 
-    # 2. Route based on role
+    # 1b. Render theme toggle
+    is_dark = st.session_state.theme == "dark"
+    theme_icon = "🌙" if not is_dark else "☀️"
+    theme_label = "Dark mode" if not is_dark else "Light mode"
+    if st.sidebar.button(f"{theme_icon} {theme_label}", use_container_width=True, key="theme_toggle"):
+        st.session_state.theme = "dark" if not is_dark else "light"
+        st.rerun()
+
+    # Apply theme via JavaScript — sets Streamlit's own CSS custom properties on the root element.
+    # This is more reliable than CSS injection because it works at the variable level.
+    _theme_val = st.session_state.theme
+    st.markdown(f"""
+    <svg style="display:none;"><script>
+    (function() {{
+        var isDark = "{_theme_val}" === "dark";
+        var root = document.documentElement;
+        if (isDark) {{
+            root.setAttribute("data-theme", "dark");
+            root.style.setProperty("--background-color", "#0f172a");
+            root.style.setProperty("--secondary-background-color", "#1e293b");
+            root.style.setProperty("--text-color", "#f1f5f9");
+            root.style.setProperty("--primary-color", "#60a5fa");
+            root.style.setProperty("--link-color", "#60a5fa");
+        }} else {{
+            root.setAttribute("data-theme", "light");
+            root.style.removeProperty("--background-color");
+            root.style.removeProperty("--secondary-background-color");
+            root.style.removeProperty("--text-color");
+            root.style.removeProperty("--primary-color");
+            root.style.removeProperty("--link-color");
+        }}
+        localStorage.setItem("sprint_cockpit_theme", "{_theme_val}");
+    }})();
+    </script></svg>
+    """, unsafe_allow_html=True)
+
+
     if st.session_state.user['user_role'] == 'Super Admin':
         pg = st.navigation([
             st.Page("app_pages/super_admin.py", title="Super Admin Console", icon=":material/admin_panel_settings:")

@@ -8,3 +8,5 @@ __pycache__/*
 *.db
 .agents/skills/developing-with-streamlit
 
+run.sh
+run.bat
