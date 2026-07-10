@@ -112,12 +112,13 @@ else:
         value_vars=['Allocated SP', 'Remaining SP', 'Bug Buffer', 'Adhoc Buffer', 'Ceremony Buffer'],
         var_name='Component', value_name='SP',
     )
-    chart_cap = alt.Chart(melt).mark_bar().encode(
-        x=alt.X("Name:N", title="Team member"),
+    chart_cap = alt.Chart(melt).mark_bar(size=24, cornerRadius=4).encode(
+        x=alt.X("Name:N", title="Team member", axis=alt.Axis(labelAngle=0)),
         y=alt.Y("SP:Q", title="Story Points", stack="zero"),
         color=alt.Color("Component:N", scale=alt.Scale(
             domain=['Allocated SP', 'Remaining SP', 'Bug Buffer', 'Adhoc Buffer', 'Ceremony Buffer'],
             range=[color_green, color_blue, color_red, color_orange, color_primary]
-        ))
+        ), legend=alt.Legend(title="Capacity Allocation Components", orient="bottom")),
+        tooltip=['Name:N', 'Component:N', 'SP:Q']
     ).properties(height=350)
-    st.altair_chart(chart_cap)
+    st.altair_chart(chart_cap, use_container_width=True)
