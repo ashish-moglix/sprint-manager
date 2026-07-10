@@ -7,19 +7,6 @@ from utils.helpers import get_workdays
 # Title
 st.title("Team capacity breakdown")
 
-# Ensure session state variables for buffers are initialized
-if "bug_p" not in st.session_state:
-    st.session_state.bug_p = 15
-if "adhoc_p" not in st.session_state:
-    st.session_state.adhoc_p = 10
-if "ceremony_p" not in st.session_state:
-    st.session_state.ceremony_p = 10
-
-# Load buffers from session state
-bug_p = st.session_state.bug_p
-adhoc_p = st.session_state.adhoc_p
-ceremony_p = st.session_state.ceremony_p
-
 # Theme Colors for Charts
 color_primary = '#1f4e78'
 color_blue = '#4a90d9'
@@ -52,9 +39,15 @@ else:
         leave_days = dev_leaves['total_days'].sum() if not dev_leaves.empty else 0
         eff = max(work_days - holiday_count - leave_days, 0)
         total_sp = eff * dev['daily_sp']
-        bug_buf = total_sp * bug_p / 100
-        adhoc_buf = total_sp * adhoc_p / 100
-        cere_buf = total_sp * ceremony_p / 100
+        
+        # Buffer calculation from individual developer parameters
+        dev_bug_p = dev.get('bug_p', 15.0)
+        dev_adhoc_p = dev.get('adhoc_p', 10.0)
+        dev_cere_p = dev.get('ceremony_p', 10.0)
+        
+        bug_buf = total_sp * dev_bug_p / 100
+        adhoc_buf = total_sp * dev_adhoc_p / 100
+        cere_buf = total_sp * dev_cere_p / 100
         avail = total_sp - bug_buf - adhoc_buf - cere_buf
         alloc = tasks[tasks['assignee'] == dev['name']]['sp'].sum() if not tasks.empty else 0
         rem = avail - alloc
@@ -116,15 +109,15 @@ else:
     st.subheader("Capacity vs allocation per person")
     melt = cap_table.melt(
         id_vars=['Name'],
-        value_vars=['Total SP', 'Bug Buffer', 'Adhoc Buffer', 'Ceremony Buffer', 'Allocated SP'],
+        value_vars=['Allocated SP', 'Remaining SP', 'Bug Buffer', 'Adhoc Buffer', 'Ceremony Buffer'],
         var_name='Component', value_name='SP',
     )
     chart_cap = alt.Chart(melt).mark_bar().encode(
         x=alt.X("Name:N", title="Team member"),
         y=alt.Y("SP:Q", title="Story Points", stack="zero"),
         color=alt.Color("Component:N", scale=alt.Scale(
-            domain=['Total SP', 'Bug Buffer', 'Adhoc Buffer', 'Ceremony Buffer', 'Allocated SP'],
-            range=[color_light, color_red, color_orange, color_primary, color_green]
+            domain=['Allocated SP', 'Remaining SP', 'Bug Buffer', 'Adhoc Buffer', 'Ceremony Buffer'],
+            range=[color_green, color_blue, color_red, color_orange, color_primary]
         ))
     ).properties(height=350)
     st.altair_chart(chart_cap)

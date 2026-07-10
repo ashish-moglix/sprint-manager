@@ -10,19 +10,6 @@ from utils.helpers import get_workdays
 # Title
 st.title("Backlog allocation & tracking")
 
-# Ensure session state variables for buffers are initialized
-if "bug_p" not in st.session_state:
-    st.session_state.bug_p = 15
-if "adhoc_p" not in st.session_state:
-    st.session_state.adhoc_p = 10
-if "ceremony_p" not in st.session_state:
-    st.session_state.ceremony_p = 10
-
-# Load buffers from session state
-bug_p = st.session_state.bug_p
-adhoc_p = st.session_state.adhoc_p
-ceremony_p = st.session_state.ceremony_p
-
 sprints_df = get_sprints()
 active = sprints_df[sprints_df['status'] == 'Active']
 
@@ -63,7 +50,13 @@ else:
 
         eff_days = max(wk_days - hols_in_sprint - dev_leaves_sum, 0)
         total_dev_sp = eff_days * dev_row['daily_sp']
-        dev_buffers = total_dev_sp * (bug_p + adhoc_p + ceremony_p) / 100
+        
+        # Buffer calculation from individual developer parameters
+        dev_bug_p = dev_row.get('bug_p', 15.0)
+        dev_adhoc_p = dev_row.get('adhoc_p', 10.0)
+        dev_cere_p = dev_row.get('ceremony_p', 10.0)
+        
+        dev_buffers = total_dev_sp * (dev_bug_p + dev_adhoc_p + dev_cere_p) / 100
         dev_avail = total_dev_sp - dev_buffers
 
         backlog_df = get_backlog(s_id)

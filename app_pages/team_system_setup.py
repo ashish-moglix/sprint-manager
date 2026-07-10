@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from utils.db import (
-    get_sprints, get_team, add_team_member, delete_team_member,
+    get_sprints, get_team, add_team_member, update_team_member, delete_team_member,
     launch_sprint, update_sprint, delete_sprint
 )
 
@@ -17,9 +17,14 @@ with t_abs[0]:
         nm = st.text_input("Full name", key="member_name_input")
         rl = st.selectbox("Role", ["Backend", "Frontend", "QA"], key="member_role_select")
         
+        # Buffer input sliders
+        b_p = st.slider("Prod bug buffer (%)", 0, 30, 15, key="member_bug_slider")
+        a_p = st.slider("Adhoc buffer (%)", 0, 20, 10, key="member_adhoc_slider")
+        c_p = st.slider("Ceremonies buffer (%)", 0, 25, 10, key="member_cere_slider")
+        
         if st.form_submit_button("Add member", type="primary"):
             if nm.strip():
-                add_team_member(nm.strip(), rl)
+                add_team_member(nm.strip(), rl, b_p, a_p, c_p)
                 st.rerun()
             else:
                 st.error("Please enter a valid name.", icon=":material/error:")
@@ -31,16 +36,36 @@ with t_abs[0]:
     if team_df.empty:
         st.info("No team members found. Add some above.", icon=":material/info:")
     else:
-        for _, row in team_df.iterrows():
-            ta, tb, tc = st.columns([3, 2, 1])
-            with ta:
-                st.markdown(f"**{row['name']}**")
-            with tb:
-                st.write(row['role'])
-            with tc:
-                if st.button("Delete", key=f"tm_del_{row['id']}", type="secondary"):
-                    delete_team_member(row['id'])
-                    st.rerun()
+        team_display = team_df.set_index('id')
+        edited_t = st.data_editor(
+            team_display,
+            column_config={
+                "name": st.column_config.TextColumn("Full name"),
+                "role": st.column_config.SelectboxColumn("Role", options=["Backend", "Frontend", "QA"]),
+                "daily_sp": st.column_config.NumberColumn("Daily SP", min_value=0.0, step=0.5),
+                "bug_p": st.column_config.NumberColumn("Bug buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                "adhoc_p": st.column_config.NumberColumn("Adhoc buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                "ceremony_p": st.column_config.NumberColumn("Ceremony buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+            },
+            key="team_editor",
+        )
+
+        col_save_t, _ = st.columns([2, 4])
+        if col_save_t.button("Save roster changes", type="primary", key="save_roster_btn"):
+            for idx, row in edited_t.iterrows():
+                update_team_member(idx, row['name'], row['role'], row['daily_sp'], row['bug_p'], row['adhoc_p'], row['ceremony_p'])
+            st.rerun()
+
+        st.subheader("Delete team member")
+        del_mem = st.selectbox(
+            "Select member to delete",
+            [""] + team_df['name'].tolist(),
+            key="delete_member_select"
+        )
+        if del_mem and st.button("Delete member", type="primary", key="delete_member_btn"):
+            mem_row = team_df[team_df['name'] == del_mem].iloc[0]
+            delete_team_member(mem_row['id'])
+            st.rerun()
 
 # Manage sprints tab
 with t_abs[1]:

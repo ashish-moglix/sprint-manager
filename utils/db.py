@@ -18,6 +18,13 @@ def init_db():
     c.execute('CREATE TABLE IF NOT EXISTS leaves (id INTEGER PRIMARY KEY, name TEXT, reason TEXT, start_date DATE, end_date DATE, total_days INTEGER)')
     c.execute('CREATE TABLE IF NOT EXISTS holidays (id INTEGER PRIMARY KEY, holiday_date DATE, description TEXT)')
 
+    # Migration for team table capacity buffers
+    for col, dtype in [('bug_p', 'REAL DEFAULT 15.0'), ('adhoc_p', 'REAL DEFAULT 10.0'), ('ceremony_p', 'REAL DEFAULT 10.0')]:
+        try:
+            c.execute(f"ALTER TABLE team ADD COLUMN {col} {dtype}")
+        except sqlite3.OperationalError:
+            pass
+
     for col, dtype in [('start_date', 'DATE'), ('end_date', 'DATE'), ("status", "TEXT DEFAULT 'Todo'")]:
         try:
             c.execute(f"ALTER TABLE backlog ADD COLUMN {col} {dtype}")
@@ -42,12 +49,19 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM team")
     if c.fetchone()[0] == 0:
         members = [
-            ('Partha', 'Backend', 2.0), ('Kanchan', 'Backend', 2.0), ('Govind', 'Backend', 2.0),
-            ('Biswajit', 'Backend', 2.0), ('Rohit', 'Backend', 2.0), ('Shashi', 'Frontend', 2.0),
-            ('Junaid', 'Frontend', 2.0), ('Kabir', 'Frontend', 2.0), ('Meenakshi', 'QA', 2.0),
-            ('Kuldeep', 'QA', 2.0), ('Ashish', 'Backend', 2.0)
+            ('Partha', 'Backend', 2.0, 15.0, 10.0, 10.0),
+            ('Kanchan', 'Backend', 2.0, 15.0, 10.0, 10.0),
+            ('Govind', 'Backend', 2.0, 15.0, 10.0, 10.0),
+            ('Biswajit', 'Backend', 2.0, 15.0, 10.0, 10.0),
+            ('Rohit', 'Backend', 2.0, 15.0, 10.0, 10.0),
+            ('Shashi', 'Frontend', 2.0, 15.0, 10.0, 10.0),
+            ('Junaid', 'Frontend', 2.0, 15.0, 10.0, 10.0),
+            ('Kabir', 'Frontend', 2.0, 15.0, 10.0, 10.0),
+            ('Meenakshi', 'QA', 2.0, 15.0, 10.0, 10.0),
+            ('Kuldeep', 'QA', 2.0, 15.0, 10.0, 10.0),
+            ('Ashish', 'Backend', 2.0, 15.0, 10.0, 10.0)
         ]
-        c.executemany("INSERT INTO team (name, role, daily_sp) VALUES (?,?,?)", members)
+        c.executemany("INSERT INTO team (name, role, daily_sp, bug_p, adhoc_p, ceremony_p) VALUES (?,?,?,?,?,?)", members)
     conn.commit()
     conn.close()
 
@@ -216,10 +230,21 @@ def delete_holiday(holiday_id):
     conn.close()
     clear_db_caches()
 
-def add_team_member(name, role):
+def add_team_member(name, role, bug_p=15.0, adhoc_p=10.0, ceremony_p=10.0):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("INSERT INTO team (name, role, daily_sp) VALUES (?,?,?)", (name, role, 2.0))
+    c.execute("INSERT INTO team (name, role, daily_sp, bug_p, adhoc_p, ceremony_p) VALUES (?,?,?,?,?,?)", (name, role, 2.0, float(bug_p), float(adhoc_p), float(ceremony_p)))
+    conn.commit()
+    conn.close()
+    clear_db_caches()
+
+def update_team_member(idx, name, role, daily_sp, bug_p, adhoc_p, ceremony_p):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(
+        "UPDATE team SET name=?, role=?, daily_sp=?, bug_p=?, adhoc_p=?, ceremony_p=? WHERE id=?",
+        (name, role, float(daily_sp), float(bug_p), float(adhoc_p), float(ceremony_p), int(idx))
+    )
     conn.commit()
     conn.close()
     clear_db_caches()

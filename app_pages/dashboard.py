@@ -8,21 +8,6 @@ from utils.helpers import get_workdays
 # Title
 st.title("Sprint analytics & context")
 
-# Ensure session state variables for buffers are initialized
-if "bug_p" not in st.session_state:
-    st.session_state.bug_p = 15
-if "adhoc_p" not in st.session_state:
-    st.session_state.adhoc_p = 10
-if "ceremony_p" not in st.session_state:
-    st.session_state.ceremony_p = 10
-
-# Sidebar configuration
-with st.sidebar:
-    st.subheader("Capacity buffers")
-    bug_p = st.slider("Prod bug buffer (%)", 0, 30, key="bug_p")
-    adhoc_p = st.slider("Adhoc buffer (%)", 0, 20, key="adhoc_p")
-    ceremony_p = st.slider("Ceremonies buffer (%)", 0, 25, key="ceremony_p")
-
 # Theme Colors for Charts
 color_primary = '#1f4e78'
 color_blue = '#4a90d9'
@@ -61,14 +46,33 @@ else:
                 l_days += get_workdays(l_s, l_e)
 
         net = (work_days - l_days - len(hols)) * dev['daily_sp']
-        cap_list.append({"Name": dev['name'], "Role": dev['role'], "Net SP": net})
+        
+        # Read member-specific buffer percentages from team table
+        b_p = dev.get('bug_p', 15.0)
+        a_p = dev.get('adhoc_p', 10.0)
+        c_p = dev.get('ceremony_p', 10.0)
+        
+        dev_bug = net * (b_p / 100)
+        dev_adhoc = net * (a_p / 100)
+        dev_cere = net * (c_p / 100)
+        plannable = net - (dev_bug + dev_adhoc + dev_cere)
+        
+        cap_list.append({
+            "Name": dev['name'], 
+            "Role": dev['role'], 
+            "Net SP": net,
+            "Bug SP": dev_bug,
+            "Adhoc SP": dev_adhoc,
+            "Ceremony SP": dev_cere,
+            "Plannable SP": plannable
+        })
 
     cap_df = pd.DataFrame(cap_list)
     total_net_sp = cap_df['Net SP'].sum()
-    bug_v = total_net_sp * (bug_p / 100)
-    adhoc_v = total_net_sp * (adhoc_p / 100)
-    cere_v = total_net_sp * (ceremony_p / 100)
-    final_plannable = total_net_sp - (bug_v + adhoc_v + cere_v)
+    bug_v = cap_df['Bug SP'].sum()
+    adhoc_v = cap_df['Adhoc SP'].sum()
+    cere_v = cap_df['Ceremony SP'].sum()
+    final_plannable = cap_df['Plannable SP'].sum()
 
     tasks = get_backlog(s_id)
     planned = tasks['sp'].sum() if not tasks.empty else 0
@@ -99,6 +103,7 @@ else:
         leaves_spr = get_leaves(spr_id)
         
         net_sp_spr = 0
+        buf_sp_spr = 0
         for _, dev in team.iterrows():
             d_leaves = leaves_spr[leaves_spr['name'] == dev['name']]
             l_days = 0
@@ -107,7 +112,14 @@ else:
                 l_e = min(pd.to_datetime(l['end_date']).date(), pd.to_datetime(spr_end).date())
                 if l_s <= l_e:
                     l_days += get_workdays(l_s, l_e)
-            net_sp_spr += (wk_days_spr - l_days - len(hols_spr)) * dev['daily_sp']
+            
+            dev_net = (wk_days_spr - l_days - len(hols_spr)) * dev['daily_sp']
+            net_sp_spr += dev_net
+            
+            b_p = dev.get('bug_p', 15.0)
+            a_p = dev.get('adhoc_p', 10.0)
+            c_p = dev.get('ceremony_p', 10.0)
+            buf_sp_spr += dev_net * (b_p + a_p + c_p) / 100
         
         capacity_trend.append(net_sp_spr)
         
@@ -117,7 +129,7 @@ else:
         velocity_trend.append(sp_d['sp'].sum() if not sp_d.empty else 0)
         
         # Buffers trend
-        buffers_trend.append(net_sp_spr * (bug_p + adhoc_p + ceremony_p) / 100)
+        buffers_trend.append(buf_sp_spr)
 
     # Fallback to single value if trends are empty
     if not capacity_trend:
@@ -290,8 +302,10 @@ else:
 
     with c_role:
         st.subheader("Role load balancing (Supply vs Demand)")
-        role_cap = cap_df.groupby('Role')['Net SP'].sum().reset_index()
-        role_cap['Plannable'] = role_cap['Net SP'] * (1 - (bug_p + adhoc_p + ceremony_p) / 100)
+        role_cap = cap_df.groupby('Role').agg(
+            Net_SP=('Net SP', 'sum'),
+            Plannable=('Plannable SP', 'sum')
+        ).reset_index()
         role_alloc = tasks.groupby('role')['sp'].sum().reset_index() if not tasks.empty else pd.DataFrame(columns=['role', 'sp'])
 
         role_df = pd.merge(role_cap, role_alloc, left_on='Role', right_on='role', how='left').fillna(0)
@@ -326,12 +340,13 @@ else:
     perf_list = []
     for _, dev in team.iterrows():
         dev_name = dev['name']
-        net_sp = cap_df[cap_df['Name'] == dev_name]['Net SP'].values[0]
+        cap_row = cap_df[cap_df['Name'] == dev_name].iloc[0]
         
-        bug_sp = net_sp * bug_p / 100
-        adhoc_sp = net_sp * adhoc_p / 100
-        cere_sp = net_sp * ceremony_p / 100
-        plannable_sp = net_sp - (bug_sp + adhoc_sp + cere_sp)
+        net_sp = cap_row['Net SP']
+        bug_sp = cap_row['Bug SP']
+        adhoc_sp = cap_row['Adhoc SP']
+        cere_sp = cap_row['Ceremony SP']
+        plannable_sp = cap_row['Plannable SP']
         
         dev_tasks = tasks[tasks['assignee'] == dev_name] if not tasks.empty else pd.DataFrame()
         tickets = len(dev_tasks)
@@ -373,4 +388,3 @@ else:
     st.altair_chart(chart_perf)
     
     st.dataframe(perf, hide_index=True)
-
