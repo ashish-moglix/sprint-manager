@@ -48,7 +48,9 @@ else:
                 if l_s <= l_e:
                     l_days += get_workdays(l_s, l_e)
 
-            net = (work_days - l_days - len(hols)) * dev['daily_sp']
+            dev_role = dev.get('role', '')
+            daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev['daily_sp']
+            net = (work_days - l_days - len(hols)) * daily_sp
             
             # Read member-specific buffer percentages from team table
             b_p = dev.get('bug_p', 15.0)
@@ -116,7 +118,9 @@ else:
                     if l_s <= l_e:
                         l_days += get_workdays(l_s, l_e)
                 
-                dev_net = (wk_days_spr - l_days - len(hols_spr)) * dev['daily_sp']
+                dev_role = dev.get('role', '')
+                daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev['daily_sp']
+                dev_net = (wk_days_spr - l_days - len(hols_spr)) * daily_sp
                 net_sp_spr += dev_net
                 
                 b_p = dev.get('bug_p', 15.0)
@@ -259,16 +263,31 @@ else:
 
         with c_buf:
             st.subheader("Buffer distribution")
-            buf_df = pd.DataFrame({
-                "Category": ["Prod Bug", "Adhoc", "Ceremonies"],
-                "SP": [bug_v, adhoc_v, cere_v],
-            })
-            chart_pie = alt.Chart(buf_df).mark_arc(innerRadius=45).encode(
-                theta=alt.Theta(field="SP", type="quantitative"),
-                color=alt.Color(field="Category", type="nominal", scale=alt.Scale(range=[color_red, color_orange, color_primary])),
-                tooltip=["Category", "SP"]
-            ).properties(height=240)
-            st.altair_chart(chart_pie)
+            buf_tab1, buf_tab2 = st.tabs(["Capacity Budget", "Actual Task Load"])
+            with buf_tab1:
+                buf_df = pd.DataFrame({
+                    "Category": ["Prod Bug", "Adhoc", "Ceremonies"],
+                    "SP": [bug_v, adhoc_v, cere_v],
+                })
+                chart_pie = alt.Chart(buf_df).mark_arc(innerRadius=45).encode(
+                    theta=alt.Theta(field="SP", type="quantitative"),
+                    color=alt.Color(field="Category", type="nominal", scale=alt.Scale(range=[color_red, color_orange, color_primary])),
+                    tooltip=["Category", "SP"]
+                ).properties(height=200)
+                st.altair_chart(chart_pie, use_container_width=True)
+            with buf_tab2:
+                actual_bug = tasks[tasks['category'] == 'Bug Fix']['sp'].sum() if not tasks.empty else 0.0
+                actual_adhoc = tasks[tasks['category'] == 'Adhoc']['sp'].sum() if not tasks.empty else 0.0
+                actual_buf_df = pd.DataFrame({
+                    "Category": ["Prod Bug", "Adhoc", "Ceremonies"],
+                    "SP": [actual_bug, actual_adhoc, cere_v],
+                })
+                chart_pie_act = alt.Chart(actual_buf_df).mark_arc(innerRadius=45).encode(
+                    theta=alt.Theta(field="SP", type="quantitative"),
+                    color=alt.Color(field="Category", type="nominal", scale=alt.Scale(range=[color_red, color_orange, color_primary])),
+                    tooltip=["Category", "SP"]
+                ).properties(height=200)
+                st.altair_chart(chart_pie_act, use_container_width=True)
 
         with c_velo:
             st.subheader("Developer velocity")
@@ -338,16 +357,30 @@ else:
 
         with c_cere:
             st.subheader("Ceremony & buffer breakdown")
-            cere_df = pd.DataFrame({
-                "Activity": ["Grooming", "Planning", "Demo/Retro", "Prod Support", "Adhoc"],
-                "SP": [cere_v * 0.5, cere_v * 0.3, cere_v * 0.2, bug_v, adhoc_v],
-            })
-            chart_cere = alt.Chart(cere_df).mark_bar(size=16, cornerRadius=4).encode(
+            actual_bug = tasks[tasks['category'] == 'Bug Fix']['sp'].sum() if not tasks.empty else 0.0
+            actual_adhoc = tasks[tasks['category'] == 'Adhoc']['sp'].sum() if not tasks.empty else 0.0
+            
+            breakdown_data = [
+                {"Activity": "Grooming", "Type": "Capacity Budget", "SP": cere_v * 0.5},
+                {"Activity": "Grooming", "Type": "Actual Task Load", "SP": cere_v * 0.5},
+                {"Activity": "Planning", "Type": "Capacity Budget", "SP": cere_v * 0.3},
+                {"Activity": "Planning", "Type": "Actual Task Load", "SP": cere_v * 0.3},
+                {"Activity": "Demo/Retro", "Type": "Capacity Budget", "SP": cere_v * 0.2},
+                {"Activity": "Demo/Retro", "Type": "Actual Task Load", "SP": cere_v * 0.2},
+                {"Activity": "Prod Support", "Type": "Capacity Budget", "SP": bug_v},
+                {"Activity": "Prod Support", "Type": "Actual Task Load", "SP": actual_bug},
+                {"Activity": "Adhoc", "Type": "Capacity Budget", "SP": adhoc_v},
+                {"Activity": "Adhoc", "Type": "Actual Task Load", "SP": actual_adhoc},
+            ]
+            cere_df = pd.DataFrame(breakdown_data)
+            
+            chart_cere = alt.Chart(cere_df).mark_bar(size=8, cornerRadius=2).encode(
+                y=alt.Y("Activity:N", sort=["Grooming", "Planning", "Demo/Retro", "Prod Support", "Adhoc"], title=None),
                 x=alt.X("SP:Q", title="Story Points"),
-                y=alt.Y("Activity:N", sort="-x", title=None),
-                color=alt.Color("Activity:N", scale=alt.Scale(range=[color_primary, color_blue, color_orange, color_red, color_gray]))
+                color=alt.Color("Type:N", scale=alt.Scale(range=[color_light, color_primary])),
+                yOffset="Type:N"
             ).properties(height=260)
-            st.altair_chart(chart_cere)
+            st.altair_chart(chart_cere, use_container_width=True)
 
         # --- DEVELOPER PERFORMANCE ---
         st.divider()

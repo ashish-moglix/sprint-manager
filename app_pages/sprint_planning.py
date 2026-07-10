@@ -64,7 +64,9 @@ else:
                 dev_leaves_sum = leaves_df[(leaves_df['name'] == owner) & (leaves_df['sprint_id'] == active_s_id)]['total_days'].sum()
 
                 eff_days = max(wk_days - hols_in_sprint - dev_leaves_sum, 0)
-                total_dev_sp = eff_days * dev_row['daily_sp']
+                dev_role = dev_row.get('role', '')
+                daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev_row['daily_sp']
+                total_dev_sp = eff_days * daily_sp
                 
                 # Buffer calculation from individual developer parameters
                 dev_bug_p = dev_row.get('bug_p', 15.0)

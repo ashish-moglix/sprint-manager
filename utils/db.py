@@ -247,10 +247,14 @@ def get_backlog(sprint_id):
     tid = get_current_team_id()
     cursor = db['backlog'].find({"team_id": str(tid), "sprint_id": str(sprint_id)})
     df = pd.DataFrame(list(cursor))
+    expected_cols = ['id', 'sprint_id', 'ticket_id', 'title', 'assignee', 'role', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date', 'team_id']
     if not df.empty:
         df['id'] = df['_id'].astype(str)
+        for col in expected_cols:
+            if col not in df.columns:
+                df[col] = None
     else:
-        df = pd.DataFrame(columns=['id', 'sprint_id', 'ticket_id', 'title', 'assignee', 'role', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date', 'team_id'])
+        df = pd.DataFrame(columns=expected_cols)
     return df
 
 # --- MUTATION OPERATIONS ---

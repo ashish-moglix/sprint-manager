@@ -110,7 +110,9 @@ def generate_sprint_report_data(sprint_id):
                 if l_s <= l_e:
                     l_days += get_workdays(l_s, l_e)
 
-        net_capacity = max(work_days - l_days - holiday_count, 0) * dev.get('daily_sp', 0.0)
+        dev_role = dev.get('role', '')
+        daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev.get('daily_sp', 0.0)
+        net_capacity = max(work_days - l_days - holiday_count, 0) * daily_sp
         
         b_p = dev.get('bug_p', 15.0)
         a_p = dev.get('adhoc_p', 10.0)

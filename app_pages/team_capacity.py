@@ -38,7 +38,9 @@ else:
         dev_leaves = leaves[leaves['name'] == dev['name']]
         leave_days = dev_leaves['total_days'].sum() if not dev_leaves.empty else 0
         eff = max(work_days - holiday_count - leave_days, 0)
-        total_sp = eff * dev['daily_sp']
+        dev_role = dev.get('role', '')
+        daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev['daily_sp']
+        total_sp = eff * daily_sp
         
         # Buffer calculation from individual developer parameters
         dev_bug_p = dev.get('bug_p', 15.0)
