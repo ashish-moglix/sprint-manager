@@ -5,8 +5,6 @@ from utils.db import (
     create_sprint, start_sprint, stop_sprint, update_sprint, delete_sprint, DuplicateUserError, update_team_member_fields, get_mongo_db
 )
 from bson import ObjectId
-from utils.hash import hash_password
-
 # Title
 st.title("Roster & lifecycle")
 
@@ -61,54 +59,56 @@ with t_abs[0]:
     if team_df.empty:
         st.info("No team members found.", icon=":material/info:")
     else:
-        team_display = team_df.set_index('id')
+        roster_cols = ['name', 'email', 'user_role', 'role', 'daily_sp', 'bug_p', 'adhoc_p', 'ceremony_p']
+        team_display = team_df.drop(columns=['password', 'team_id'], errors='ignore').set_index('id')
         
         # Display editable roster only for Admin
         if user_role == 'Team Admin':
-            edited_t = st.data_editor(
-                team_display,
-                column_config={
-                    "name": st.column_config.TextColumn("Full name"),
-                    "email": st.column_config.TextColumn("Email"),
-                    "password": st.column_config.TextColumn("Password"),
-                    "user_role": st.column_config.SelectboxColumn("User role", options=["Team Admin", "Team User"]),
-                    "role": st.column_config.SelectboxColumn("Developer role", options=["Backend", "Frontend", "QA", "PM", "EM"]),
-                    "daily_sp": st.column_config.NumberColumn("Daily SP", min_value=0.0, step=0.5),
-                    "bug_p": st.column_config.NumberColumn("Bug buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
-                    "adhoc_p": st.column_config.NumberColumn("Adhoc buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
-                    "ceremony_p": st.column_config.NumberColumn("Ceremony buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
-                },
-                key="team_editor",
-            )
+            t_sub_edit, t_sub_del = st.tabs(["📝 Edit roster", "🗑 Delete member"])
+            with t_sub_edit:
+                edited_t = st.data_editor(
+                    team_display[roster_cols],
+                    column_config={
+                        "name": st.column_config.TextColumn("Full name"),
+                        "email": st.column_config.TextColumn("Email"),
+                        "user_role": st.column_config.SelectboxColumn("User role", options=["Team Admin", "Team User"]),
+                        "role": st.column_config.SelectboxColumn("Developer role", options=["Backend", "Frontend", "QA", "PM", "EM"]),
+                        "daily_sp": st.column_config.NumberColumn("Daily SP", min_value=0.0, step=0.5),
+                        "bug_p": st.column_config.NumberColumn("Bug buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                        "adhoc_p": st.column_config.NumberColumn("Adhoc buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                        "ceremony_p": st.column_config.NumberColumn("Ceremony buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                    },
+                    key="team_editor",
+                    hide_index=True,
+                )
 
-            col_save_t, _ = st.columns([2, 4])
-            if col_save_t.button("Save roster changes", type="primary", key="save_roster_btn"):
-                editor_state = st.session_state.get("team_editor", {})
-                edited_rows = editor_state.get("edited_rows", {})
-                if edited_rows:
-                    for idx, changes in edited_rows.items():
-                        db_id = team_display.index[int(idx)]
-                        # Hash password if modified
-                        if "password" in changes and changes["password"]:
-                            changes["password"] = hash_password(changes["password"])
-                        
-                        update_team_member_fields(db_id, changes)
-                    st.success("Roster changes saved.")
-                    st.rerun()
-                else:
-                    st.info("No changes to save.")
+                col_save_t, _ = st.columns([2, 4])
+                if col_save_t.button("Save roster changes", type="primary", key="save_roster_btn"):
+                    editor_state = st.session_state.get("team_editor", {})
+                    edited_rows = editor_state.get("edited_rows", {})
+                    if edited_rows:
+                        for idx, changes in edited_rows.items():
+                            db_id = team_display.index[int(idx)]
+                            update_team_member_fields(db_id, changes)
+                        st.success("Roster changes saved.")
+                        st.rerun()
+                    else:
+                        st.info("No changes to save.")
 
-            st.subheader("Delete team member")
-            del_mem = st.selectbox(
-                "Select member to delete",
-                [""] + team_df['name'].tolist(),
-                key="delete_member_select"
-            )
-            if del_mem and st.button("Delete member", type="primary", key="delete_member_btn"):
-                mem_row = team_df[team_df['name'] == del_mem].iloc[0]
-                delete_team_member(mem_row['id'])
-                st.success("Member deleted.")
-                st.rerun()
+            with t_sub_del:
+                del_m_cols = st.columns([3, 2, 2, 1])
+                del_m_cols[0].markdown("**Name**")
+                del_m_cols[1].markdown("**Role**")
+                del_m_cols[2].markdown("**Email**")
+                del_m_cols[3].markdown("**Del**")
+                for _, row in team_df.iterrows():
+                    dm1, dm2, dm3, dm4 = st.columns([3, 2, 2, 1])
+                    dm1.write(row['name'])
+                    dm2.write(row.get('role', ''))
+                    dm3.write(row.get('email', ''))
+                    if dm4.button("🗑", key=f"del_m_{row['id']}", help=f"Delete {row['name']}"):
+                        delete_team_member(row['id'])
+                        st.rerun()
         else:
             # For Team Users, show as a read-only dataframe, omitting passwords
             read_only_df = team_df.drop(columns=['password'], errors='ignore')
@@ -238,54 +238,61 @@ with t_abs[1]:
         existing_cols = [c for c in cols_to_show if c in sprints_display.columns]
         
         if user_role == 'Team Admin':
-            # Let admins edit planned dates and names only
-            edited_s = st.data_editor(
-                sprints_display[existing_cols],
-                column_config={
-                    "name": "Sprint name",
-                    "start_date": st.column_config.DateColumn("Planned Start"),
-                    "end_date": st.column_config.DateColumn("Planned End"),
-                    "actual_start_date": st.column_config.DateColumn("Actual Start", disabled=True),
-                    "actual_end_date": st.column_config.DateColumn("Actual End", disabled=True),
-                    "status": st.column_config.TextColumn("Status", disabled=True),
-                    "Lag Stats": st.column_config.TextColumn("Lag Stats", disabled=True),
-                },
-                key="sprints_editor",
-            )
+            s_sub_edit, s_sub_del = st.tabs(["📝 Edit sprints", "🗑 Delete sprint"])
+            with s_sub_edit:
+                # Let admins edit planned dates and names only
+                edited_s = st.data_editor(
+                    sprints_display[existing_cols],
+                    column_config={
+                        "name": "Sprint name",
+                        "start_date": st.column_config.DateColumn("Planned Start"),
+                        "end_date": st.column_config.DateColumn("Planned End"),
+                        "actual_start_date": st.column_config.DateColumn("Actual Start", disabled=True),
+                        "actual_end_date": st.column_config.DateColumn("Actual End", disabled=True),
+                        "status": st.column_config.TextColumn("Status", disabled=True),
+                        "Lag Stats": st.column_config.TextColumn("Lag Stats", disabled=True),
+                    },
+                    key="sprints_editor",
+                    hide_index=True,
+                )
 
-            if st.button("Save sprint changes", type="primary", key="save_sprints_btn"):
-                editor_state = st.session_state.get("sprints_editor", {})
-                edited_rows = editor_state.get("edited_rows", {})
-                if edited_rows:
-                    db = get_mongo_db()
-                    for idx, changes in edited_rows.items():
-                        db_id = sprints_display.index[int(idx)]
-                        if "start_date" in changes:
-                            changes["start_date"] = str(changes["start_date"])
-                        if "end_date" in changes:
-                            changes["end_date"] = str(changes["end_date"])
-                        db['sprints'].update_one(
-                            {"_id": ObjectId(db_id)},
-                            {"$set": changes}
-                        )
-                    from utils.db import clear_db_caches
-                    clear_db_caches()
-                    st.success("Sprint changes saved.")
-                    st.rerun()
-                else:
-                    st.info("No changes to save.")
+                if st.button("Save sprint changes", type="primary", key="save_sprints_btn"):
+                    editor_state = st.session_state.get("sprints_editor", {})
+                    edited_rows = editor_state.get("edited_rows", {})
+                    if edited_rows:
+                        db = get_mongo_db()
+                        for idx, changes in edited_rows.items():
+                            db_id = sprints_display.index[int(idx)]
+                            if "start_date" in changes:
+                                changes["start_date"] = str(changes["start_date"])
+                            if "end_date" in changes:
+                                changes["end_date"] = str(changes["end_date"])
+                            db['sprints'].update_one(
+                                {"_id": ObjectId(db_id)},
+                                {"$set": changes}
+                            )
+                        from utils.db import clear_db_caches
+                        clear_db_caches()
+                        st.success("Sprint changes saved.")
+                        st.rerun()
+                    else:
+                        st.info("No changes to save.")
 
-            st.subheader("Delete sprint")
-            del_sprint = st.selectbox(
-                "Select sprint to delete (cascades to all backlog, leaves, holidays)",
-                [""] + sprints_df['name'].tolist(),
-                key="delete_sprint_select"
-            )
-            if del_sprint and st.button("Delete sprint & all related data", type="primary", key="delete_sprint_btn"):
-                delete_sprint(del_sprint)
-                st.success("Sprint deleted.")
-                st.rerun()
+            with s_sub_del:
+                del_s_cols = st.columns([3, 2, 2, 1])
+                del_s_cols[0].markdown("**Sprint**")
+                del_s_cols[1].markdown("**Status**")
+                del_s_cols[2].markdown("**Dates**")
+                del_s_cols[3].markdown("**Del**")
+                for _, row in sprints_df.iterrows():
+                    ds1, ds2, ds3, ds4 = st.columns([3, 2, 2, 1])
+                    ds1.write(row['name'])
+                    ds2.write(row['status'])
+                    ds3.write(f"{pd.to_datetime(row['start_date']).date()} - {pd.to_datetime(row['end_date']).date()}")
+                    if ds4.button("🗑", key=f"del_s_{row['id']}", help=f"Delete {row['name']} and all related data"):
+                        delete_sprint(row['name'])
+                        st.rerun()
         else:
-            st.dataframe(sprints_display[existing_cols])
+            st.dataframe(sprints_display[existing_cols], hide_index=True)
     else:
         st.info("No sprints configured.", icon=":material/info:")

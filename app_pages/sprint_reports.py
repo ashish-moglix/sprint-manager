@@ -41,7 +41,19 @@ else:
     
     if report_doc:
         st.success(f"Performance report loaded. Status: **{s_status}** (Report generated at: {report_doc.get('generated_at', 'N/A')[:19].replace('T', ' ')})")
-        
+
+        # Regenerate button
+        regen_col1, regen_col2 = st.columns([1, 5])
+        with regen_col1:
+            if st.button("🔄 Regenerate Report", type="secondary", help="Recompile the report from latest data — useful if tickets were updated after the last generation."):
+                with st.spinner("Regenerating report from latest data..."):
+                    try:
+                        report_doc = compile_and_save_report(s_id)
+                        st.success("Report regenerated successfully with latest data!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to regenerate report: {str(e)}")
+
         # 3. Download Section
         d_col1, d_col2, d_col3 = st.columns(3)
         with d_col1:

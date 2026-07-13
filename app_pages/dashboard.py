@@ -245,6 +245,39 @@ else:
             else:
                 st.info("Burndown data not available — sprint dates may be invalid.", icon=":material/warning:")
 
+        # --- SPRINT TIMELINE STATUS ---
+        a_start = s_info.get('actual_start_date')
+        a_end = s_info.get('actual_end_date')
+        st.subheader("Sprint timeline")
+        tl1, tl2, tl3, tl4, tl5 = st.columns(5)
+        tl1.metric("Planned start", s_start)
+        tl2.metric("Actual start", a_start if pd.notna(a_start) and a_start else "—")
+        tl3.metric("Planned end", s_end)
+        tl4.metric("Actual end", a_end if pd.notna(a_end) and a_end else "—")
+        if a_start and pd.notna(a_start):
+            start_diff = (pd.to_datetime(a_start).date() - pd.to_datetime(s_start).date()).days
+            tl5.metric("Start variance", f"{start_diff:+d}d", delta_color="inverse")
+        elif a_end and pd.notna(a_end):
+            end_diff = (pd.to_datetime(a_end).date() - pd.to_datetime(s_end).date()).days
+            tl5.metric("End variance", f"{end_diff:+d}d", delta_color="inverse")
+        else:
+            tl5.metric("Status", s_info['status'])
+
+        # --- CATEGORY WISE TICKET BREAKDOWN ---
+        if not tasks.empty and 'category' in tasks.columns:
+            st.subheader("Category-wise completion")
+            cat_status = tasks.groupby(['category', 'status']).agg(Count=('ticket_id', 'count'), SP=('sp', 'sum')).reset_index()
+            cat_pivot = cat_status.pivot_table(
+                index='category', columns='status', values='Count',
+                aggfunc='sum', fill_value=0
+            ).reset_index()
+            for col in ['Todo', 'In Progress', 'Done']:
+                if col not in cat_pivot.columns:
+                    cat_pivot[col] = 0
+            cat_pivot['Total'] = cat_pivot[['Todo', 'In Progress', 'Done']].sum(axis=1)
+            cat_pivot['Done %'] = (cat_pivot['Done'] / cat_pivot['Total'] * 100).round(1)
+            st.dataframe(cat_pivot.set_index('category'), use_container_width=True)
+
         # --- MIDDLE ROW: Status / Buffers / Velocity Detail ---
         st.divider()
         c_dist, c_buf, c_velo = st.columns([1.2, 1, 1.5])
@@ -461,12 +494,8 @@ else:
 
         st.markdown("##### Detailed Allocation Breakdown")
         
-        # Prepare fractional utilization for st.column_config.ProgressColumn
-        perf_display = perf.copy()
-        perf_display['Utilization Status'] = perf_display['Utilization %'] / 100.0
-        
         st.dataframe(
-            perf_display,
+            perf,
             column_config={
                 "Name": st.column_config.TextColumn("Team Member", width="medium"),
                 "Tickets": st.column_config.NumberColumn("Tickets", format="%d", width="small"),
@@ -477,13 +506,12 @@ else:
                 "Plannable": st.column_config.NumberColumn("Plannable", format="%.1f SP", width="small"),
                 "Allocated": st.column_config.NumberColumn("Allocated", format="%.1f SP", width="small"),
                 "Remaining": st.column_config.NumberColumn("Remaining", format="%.1f SP", width="small"),
-                "Utilization %": st.column_config.NumberColumn("Util %", format="%.1f%%", width="small"),
-                "Utilization Status": st.column_config.ProgressColumn(
-                    "Utilization Status",
+                "Utilization %": st.column_config.ProgressColumn(
+                    "Utilization",
                     help="Story points allocated vs plannable capacity",
-                    format="%.0f%%",
+                    format="%.1f%%",
                     min_value=0.0,
-                    max_value=1.5
+                    max_value=100.0
                 )
             },
             hide_index=True,

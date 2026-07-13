@@ -71,33 +71,47 @@ else:
             leaves_display = leaves_display.set_index('id')
 
             if user_role != 'Team User' and is_selected_active:
-                edited = st.data_editor(
-                    leaves_display,
-                    column_config={
-                        "name": st.column_config.SelectboxColumn("Person", options=team_names),
-                        "sprint": st.column_config.TextColumn("Sprint", disabled=True),
-                        "reason": st.column_config.SelectboxColumn("Type", options=["Planned", "Sick", "Emergency"]),
-                        "start_date": st.column_config.DateColumn("Start date"),
-                        "end_date": st.column_config.DateColumn("End date"),
-                        "total_days": st.column_config.NumberColumn("Days", disabled=True),
-                    },
-                    key="leaves_editor",
-                )
+                sub_edit, sub_del = st.tabs(["📝 Edit leaves", "🗑 Delete leaves"])
+                with sub_edit:
+                    edited = st.data_editor(
+                        leaves_display,
+                        column_config={
+                            "name": st.column_config.SelectboxColumn("Person", options=team_names),
+                            "sprint": st.column_config.TextColumn("Sprint", disabled=True),
+                            "reason": st.column_config.SelectboxColumn("Type", options=["Planned", "Sick", "Emergency"]),
+                            "start_date": st.column_config.DateColumn("Start date"),
+                            "end_date": st.column_config.DateColumn("End date"),
+                            "total_days": st.column_config.NumberColumn("Days", disabled=True),
+                        },
+                        key="leaves_editor",
+                        hide_index=True,
+                    )
 
-                col_save, _ = st.columns([2, 4])
-                if col_save.button("Save leave changes", type="primary"):
-                    for idx, row in edited.iterrows():
-                        days = get_workdays(row['start_date'], row['end_date'])
-                        update_leave(idx, row['name'], row['reason'], row['start_date'], row['end_date'], days)
-                    st.rerun()
+                    col_save, _ = st.columns([2, 4])
+                    if col_save.button("Save leave changes", type="primary"):
+                        for idx, row in edited.iterrows():
+                            days = get_workdays(row['start_date'], row['end_date'])
+                            update_leave(idx, row['name'], row['reason'], row['start_date'], row['end_date'], days)
+                        st.rerun()
 
-                st.subheader("Delete leaves")
-                del_leave = st.selectbox("Select leave entry to delete", [""] + leaves_data['id'].astype(str).tolist(), key="delete_leave_select")
-                if del_leave and st.button("Delete selected leave", type="primary", key="delete_leave_btn"):
-                    delete_leave(del_leave)
-                    st.rerun()
+                with sub_del:
+                    del_l_cols = st.columns([3, 2, 2, 2, 1])
+                    del_l_cols[0].markdown("**Member**")
+                    del_l_cols[1].markdown("**Type**")
+                    del_l_cols[2].markdown("**Start**")
+                    del_l_cols[3].markdown("**End**")
+                    del_l_cols[4].markdown("**Del**")
+                    for _, row in leaves_data.iterrows():
+                        dl1, dl2, dl3, dl4, dl5 = st.columns([3, 2, 2, 2, 1])
+                        dl1.write(row['name'])
+                        dl2.write(row['reason'])
+                        dl3.write(str(pd.to_datetime(row['start_date']).date()))
+                        dl4.write(str(pd.to_datetime(row['end_date']).date()))
+                        if dl5.button("🗑", key=f"del_l_{row['id']}", help=f"Delete leave for {row['name']}"):
+                            delete_leave(row['id'])
+                            st.rerun()
             else:
-                st.dataframe(leaves_display[['name', 'sprint', 'reason', 'start_date', 'end_date', 'total_days']], use_container_width=True)
+                st.dataframe(leaves_display[['name', 'sprint', 'reason', 'start_date', 'end_date', 'total_days']], use_container_width=True, hide_index=True)
         else:
             st.info(f"No leaves configured for sprint '{selected_sprint_name}'.", icon=":material/info:")
 
@@ -136,28 +150,38 @@ else:
             hols_display = hols_display.set_index('id')
 
             if user_role != 'Team User' and is_selected_active:
-                edited_h = st.data_editor(
-                    hols_display,
-                    column_config={
-                        "holiday_date": st.column_config.DateColumn("Holiday date"),
-                        "description": "Description",
-                        "sprint": st.column_config.TextColumn("Sprint", disabled=True),
-                    },
-                    key="holidays_editor",
-                )
+                sub_edit_h, sub_del_h = st.tabs(["📝 Edit holidays", "🗑 Delete holidays"])
+                with sub_edit_h:
+                    edited_h = st.data_editor(
+                        hols_display,
+                        column_config={
+                            "holiday_date": st.column_config.DateColumn("Holiday date"),
+                            "description": "Description",
+                            "sprint": st.column_config.TextColumn("Sprint", disabled=True),
+                        },
+                        key="holidays_editor",
+                        hide_index=True,
+                    )
 
-                col_save2, _ = st.columns([2, 4])
-                if col_save2.button("Save holiday changes", type="primary"):
-                    for idx, row in edited_h.iterrows():
-                        update_holiday(idx, row['holiday_date'], row['description'])
-                    st.rerun()
+                    col_save2, _ = st.columns([2, 4])
+                    if col_save2.button("Save holiday changes", type="primary"):
+                        for idx, row in edited_h.iterrows():
+                            update_holiday(idx, row['holiday_date'], row['description'])
+                        st.rerun()
 
-                st.subheader("Delete holidays")
-                del_hol = st.selectbox("Select holiday to delete", [""] + hols_data['id'].astype(str).tolist(), key="delete_holiday_select")
-                if del_hol and st.button("Delete selected holiday", type="primary", key="delete_holiday_btn"):
-                    delete_holiday(del_hol)
-                    st.rerun()
+                with sub_del_h:
+                    del_h_cols = st.columns([4, 3, 1])
+                    del_h_cols[0].markdown("**Date**")
+                    del_h_cols[1].markdown("**Description**")
+                    del_h_cols[2].markdown("**Del**")
+                    for _, row in hols_data.iterrows():
+                        dh1, dh2, dh3 = st.columns([4, 3, 1])
+                        dh1.write(str(pd.to_datetime(row['holiday_date']).date()))
+                        dh2.write(row['description'])
+                        if dh3.button("🗑", key=f"del_h_{row['id']}", help=f"Delete holiday on {row['holiday_date']}"):
+                            delete_holiday(row['id'])
+                            st.rerun()
             else:
-                st.dataframe(hols_display[['holiday_date', 'description', 'sprint']], use_container_width=True)
+                st.dataframe(hols_display[['holiday_date', 'description', 'sprint']], use_container_width=True, hide_index=True)
         else:
             st.info(f"No holidays configured for sprint '{selected_sprint_name}'.", icon=":material/info:")
