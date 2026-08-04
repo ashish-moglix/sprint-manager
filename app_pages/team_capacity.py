@@ -103,7 +103,8 @@ else:
             "Remaining SP": st.column_config.NumberColumn("Remaining SP", disabled=True),
         },
         key="cap_editor",
-        height=50 * (len(cap_table) + 1),
+        num_rows="dynamic",
+        use_container_width=True,
     )
 
     # Visual: stacked bar per person

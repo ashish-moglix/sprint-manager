@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from utils.db import (
     get_sprints, get_team, add_team_member, update_team_member, delete_team_member,
-    create_sprint, start_sprint, stop_sprint, update_sprint, delete_sprint, DuplicateUserError, update_team_member_fields, get_mongo_db
+    create_sprint, start_sprint, stop_sprint, update_sprint, delete_sprint, DuplicateUserError,
+    update_team_member_fields, get_mongo_db, clear_db_caches
 )
 from bson import ObjectId
 # Title
@@ -64,51 +65,80 @@ with t_abs[0]:
         
         # Display editable roster only for Admin
         if user_role == 'Team Admin':
-            t_sub_edit, t_sub_del = st.tabs(["📝 Edit roster", "🗑 Delete member"])
-            with t_sub_edit:
-                edited_t = st.data_editor(
-                    team_display[roster_cols],
-                    column_config={
-                        "name": st.column_config.TextColumn("Full name"),
-                        "email": st.column_config.TextColumn("Email"),
-                        "user_role": st.column_config.SelectboxColumn("User role", options=["Team Admin", "Team User"]),
-                        "role": st.column_config.SelectboxColumn("Developer role", options=["Backend", "Frontend", "QA", "PM", "EM"]),
-                        "daily_sp": st.column_config.NumberColumn("Daily SP", min_value=0.0, step=0.5),
-                        "bug_p": st.column_config.NumberColumn("Bug buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
-                        "adhoc_p": st.column_config.NumberColumn("Adhoc buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
-                        "ceremony_p": st.column_config.NumberColumn("Ceremony buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
-                    },
-                    key="team_editor",
-                    hide_index=True,
+            f1, f2 = st.columns([2, 3])
+            with f1:
+                role_filter = st.selectbox(
+                    "Filter by role",
+                    ["All", "Backend", "Frontend", "QA", "PM", "EM"],
+                    key="roster_role_filter",
                 )
+            with f2:
+                roster_search = st.text_input("Search by name or email", placeholder="Type to filter...", key="roster_search")
 
-                col_save_t, _ = st.columns([2, 4])
-                if col_save_t.button("Save roster changes", type="primary", key="save_roster_btn"):
-                    editor_state = st.session_state.get("team_editor", {})
-                    edited_rows = editor_state.get("edited_rows", {})
-                    if edited_rows:
-                        for idx, changes in edited_rows.items():
-                            db_id = team_display.index[int(idx)]
-                            update_team_member_fields(db_id, changes)
-                        st.success("Roster changes saved.")
-                        st.rerun()
-                    else:
-                        st.info("No changes to save.")
+            filtered_roster = team_display
+            if role_filter != "All":
+                filtered_roster = filtered_roster[filtered_roster['role'] == role_filter]
+            if roster_search.strip():
+                mask = filtered_roster['name'].str.contains(roster_search.strip(), case=False, na=False) | \
+                       filtered_roster['email'].str.contains(roster_search.strip(), case=False, na=False)
+                filtered_roster = filtered_roster[mask]
 
-            with t_sub_del:
-                del_m_cols = st.columns([3, 2, 2, 1])
-                del_m_cols[0].markdown("**Name**")
-                del_m_cols[1].markdown("**Role**")
-                del_m_cols[2].markdown("**Email**")
-                del_m_cols[3].markdown("**Del**")
-                for _, row in team_df.iterrows():
-                    dm1, dm2, dm3, dm4 = st.columns([3, 2, 2, 1])
-                    dm1.write(row['name'])
-                    dm2.write(row.get('role', ''))
-                    dm3.write(row.get('email', ''))
-                    if dm4.button("🗑", key=f"del_m_{row['id']}", help=f"Delete {row['name']}"):
-                        delete_team_member(row['id'])
-                        st.rerun()
+            roster_edit = filtered_roster[roster_cols].copy()
+            roster_id_map = filtered_roster.index.values.tolist()
+            roster_edit['Delete'] = False
+
+            def _auto_save_roster():
+                edited = st.session_state.get("team_editor", {}).get("edited_rows", {})
+                if not edited:
+                    return
+                for row_idx, changes in edited.items():
+                    if "Delete" in changes:
+                        continue
+                    if row_idx >= len(roster_id_map):
+                        continue
+                    mongo_id = roster_id_map[row_idx]
+                    update_team_member_fields(mongo_id, changes)
+                clear_db_caches()
+
+            st.data_editor(
+                roster_edit[roster_cols + ['Delete']],
+                column_config={
+                    "name": st.column_config.TextColumn("Full name"),
+                    "email": st.column_config.TextColumn("Email"),
+                    "user_role": st.column_config.SelectboxColumn("User role", options=["Team Admin", "Team User"]),
+                    "role": st.column_config.SelectboxColumn("Developer role", options=["Backend", "Frontend", "QA", "PM", "EM"]),
+                    "daily_sp": st.column_config.NumberColumn("Daily SP", min_value=0.0, step=0.5),
+                    "bug_p": st.column_config.NumberColumn("Bug buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                    "adhoc_p": st.column_config.NumberColumn("Adhoc buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                    "ceremony_p": st.column_config.NumberColumn("Ceremony buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                    "Delete": st.column_config.CheckboxColumn("Delete", default=False),
+                },
+                key="team_editor",
+                hide_index=True,
+                num_rows="dynamic",
+                on_change=_auto_save_roster,
+            )
+
+            edited_state = st.session_state.get("team_editor", {})
+            edited_rows = edited_state.get("edited_rows", {})
+            delete_marked = [
+                (i, roster_id_map[i])
+                for i, c in edited_rows.items()
+                if c.get("Delete") and i < len(roster_id_map)
+            ]
+            if delete_marked:
+                names_list = ", ".join(roster_edit.iloc[i]['name'] for i, _ in delete_marked)
+                st.warning(f"Marked for deletion: **{names_list}**", icon=":material/warning:")
+                if st.button("Confirm delete", type="primary", key="confirm_del_roster"):
+                    deleted = 0
+                    for _, mongo_id in delete_marked:
+                        delete_team_member(mongo_id)
+                        deleted += 1
+                    if "team_editor" in st.session_state:
+                        del st.session_state["team_editor"]
+                    clear_db_caches()
+                    st.success(f"Deleted {deleted} member(s).")
+                    st.rerun()
         else:
             # For Team Users, show as a read-only dataframe, omitting passwords
             read_only_df = team_df.drop(columns=['password'], errors='ignore')
@@ -238,60 +268,76 @@ with t_abs[1]:
         existing_cols = [c for c in cols_to_show if c in sprints_display.columns]
         
         if user_role == 'Team Admin':
-            s_sub_edit, s_sub_del = st.tabs(["📝 Edit sprints", "🗑 Delete sprint"])
-            with s_sub_edit:
-                # Let admins edit planned dates and names only
-                edited_s = st.data_editor(
-                    sprints_display[existing_cols],
-                    column_config={
-                        "name": "Sprint name",
-                        "start_date": st.column_config.DateColumn("Planned Start"),
-                        "end_date": st.column_config.DateColumn("Planned End"),
-                        "actual_start_date": st.column_config.DateColumn("Actual Start", disabled=True),
-                        "actual_end_date": st.column_config.DateColumn("Actual End", disabled=True),
-                        "status": st.column_config.TextColumn("Status", disabled=True),
-                        "Lag Stats": st.column_config.TextColumn("Lag Stats", disabled=True),
-                    },
-                    key="sprints_editor",
-                    hide_index=True,
-                )
+            status_filter = st.selectbox(
+                "Filter by status",
+                ["All", "Draft", "Active", "Archived"],
+                key="sprint_status_filter",
+            )
+            filtered_sprints = sprints_display if status_filter == "All" else sprints_display[sprints_display['status'] == status_filter]
 
-                if st.button("Save sprint changes", type="primary", key="save_sprints_btn"):
-                    editor_state = st.session_state.get("sprints_editor", {})
-                    edited_rows = editor_state.get("edited_rows", {})
-                    if edited_rows:
-                        db = get_mongo_db()
-                        for idx, changes in edited_rows.items():
-                            db_id = sprints_display.index[int(idx)]
-                            if "start_date" in changes:
-                                changes["start_date"] = str(changes["start_date"])
-                            if "end_date" in changes:
-                                changes["end_date"] = str(changes["end_date"])
-                            db['sprints'].update_one(
-                                {"_id": ObjectId(db_id)},
-                                {"$set": changes}
-                            )
-                        from utils.db import clear_db_caches
-                        clear_db_caches()
-                        st.success("Sprint changes saved.")
-                        st.rerun()
-                    else:
-                        st.info("No changes to save.")
+            sprints_edit = filtered_sprints[existing_cols].copy()
+            sprint_id_map = filtered_sprints.index.values.tolist()
+            sprints_edit['Delete'] = False
 
-            with s_sub_del:
-                del_s_cols = st.columns([3, 2, 2, 1])
-                del_s_cols[0].markdown("**Sprint**")
-                del_s_cols[1].markdown("**Status**")
-                del_s_cols[2].markdown("**Dates**")
-                del_s_cols[3].markdown("**Del**")
-                for _, row in sprints_df.iterrows():
-                    ds1, ds2, ds3, ds4 = st.columns([3, 2, 2, 1])
-                    ds1.write(row['name'])
-                    ds2.write(row['status'])
-                    ds3.write(f"{pd.to_datetime(row['start_date']).date()} - {pd.to_datetime(row['end_date']).date()}")
-                    if ds4.button("🗑", key=f"del_s_{row['id']}", help=f"Delete {row['name']} and all related data"):
-                        delete_sprint(row['name'])
-                        st.rerun()
+            def _auto_save_sprints():
+                edited = st.session_state.get("sprints_editor", {}).get("edited_rows", {})
+                if not edited:
+                    return
+                db = get_mongo_db()
+                for row_idx, changes in edited.items():
+                    if "Delete" in changes:
+                        continue
+                    if row_idx >= len(sprint_id_map):
+                        continue
+                    mongo_id = sprint_id_map[row_idx]
+                    if "start_date" in changes:
+                        changes["start_date"] = str(changes["start_date"])
+                    if "end_date" in changes:
+                        changes["end_date"] = str(changes["end_date"])
+                    db['sprints'].update_one(
+                        {"_id": ObjectId(mongo_id)},
+                        {"$set": changes}
+                    )
+                clear_db_caches()
+
+            st.data_editor(
+                sprints_edit[existing_cols + ['Delete']],
+                column_config={
+                    "name": "Sprint name",
+                    "start_date": st.column_config.DateColumn("Planned Start"),
+                    "end_date": st.column_config.DateColumn("Planned End"),
+                    "actual_start_date": st.column_config.DateColumn("Actual Start", disabled=True),
+                    "actual_end_date": st.column_config.DateColumn("Actual End", disabled=True),
+                    "status": st.column_config.TextColumn("Status", disabled=True),
+                    "Lag Stats": st.column_config.TextColumn("Lag Stats", disabled=True),
+                    "Delete": st.column_config.CheckboxColumn("Delete", default=False),
+                },
+                key="sprints_editor",
+                hide_index=True,
+                num_rows="dynamic",
+                on_change=_auto_save_sprints,
+            )
+
+            edited_state = st.session_state.get("sprints_editor", {})
+            edited_rows = edited_state.get("edited_rows", {})
+            delete_marked = [
+                (i, sprint_id_map[i])
+                for i, c in edited_rows.items()
+                if c.get("Delete") and i < len(sprint_id_map)
+            ]
+            if delete_marked:
+                names_list = ", ".join(sprints_edit.iloc[i]['name'] for i, _ in delete_marked)
+                st.warning(f"Marked for deletion: **{names_list}**", icon=":material/warning:")
+                if st.button("Confirm delete", type="primary", key="confirm_del_sprints"):
+                    deleted = 0
+                    for _, row_name in delete_marked:
+                        delete_sprint(sprints_edit.iloc[_]['name'])
+                        deleted += 1
+                    if "sprints_editor" in st.session_state:
+                        del st.session_state["sprints_editor"]
+                    clear_db_caches()
+                    st.success(f"Deleted {deleted} sprint(s).")
+                    st.rerun()
         else:
             st.dataframe(sprints_display[existing_cols], hide_index=True)
     else:

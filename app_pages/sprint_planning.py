@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 from utils.db import (
     get_sprints, get_team, get_leaves, get_holidays, get_backlog,
-    add_ticket, update_ticket, delete_ticket
+    add_ticket, update_ticket, delete_ticket, clear_db_caches
 )
 from utils.helpers import get_workdays
 
@@ -103,7 +103,6 @@ else:
 
     if not tasks.empty:
         if not is_selected_active:
-            # Viewing a Draft or Archived Sprint -> Read-only backlog for everyone!
             st.subheader(f"Backlog for '{selected_sprint_name}' (Read-Only - {selected_s_row['status']})")
             tasks_display = tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
             tasks_display['sprint'] = selected_sprint_name
@@ -142,7 +141,8 @@ else:
                     },
                     key="my_task_editor",
                     hide_index=True,
-                    height=50 * (len(my_tasks_display) + 1),
+                    num_rows="dynamic",
+                    use_container_width=True,
                 )
 
                 col_save, _ = st.columns([2, 4])
@@ -168,6 +168,8 @@ else:
                                 idx, orig['ticket_id'], orig['title'], orig['assignee'], orig['category'],
                                 float(row['sp']), float(orig.get('actual_sp') or 0.0), new_status, start_str, end_str
                             )
+                    if "my_task_editor" in st.session_state:
+                        del st.session_state["my_task_editor"]
                     st.rerun()
             else:
                 st.info("You currently have no tasks assigned to you in this sprint.")
@@ -184,77 +186,108 @@ else:
 
         else:
             # Active Sprint, Scrum Master/Admin/PM role -> Full edit privileges!
-            tab_edit, tab_delete = st.tabs(["📝 Edit tasks", "🗑 Delete tasks"])
-            with tab_edit:
-                st.subheader("Task tracker (Active Sprint)")
-                tasks_display = tasks[['id', 'ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
-                tasks_display['sprint'] = selected_sprint_name
-                tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date']).dt.date
-                tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date']).dt.date
-                tasks_display['actual_sp'] = tasks_display['actual_sp'].fillna(0).astype(float)
-                tasks_display = tasks_display.set_index('id')
+            st.subheader("Task tracker (Active Sprint)")
 
-                edited_tasks = st.data_editor(
-                    tasks_display,
-                    column_config={
-                        'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
-                        'ticket_id': st.column_config.TextColumn('Ticket', width='small'),
-                        'title': st.column_config.TextColumn('Title', width='medium'),
-                        'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
-                        'category': st.column_config.SelectboxColumn('Category', options=['New Work', 'Spillover', 'Bug Fix', 'Adhoc'], width='small'),
-                        'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
-                        'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small'),
-                        'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                        'start_date': st.column_config.DateColumn('Start', width='small'),
-                        'end_date': st.column_config.DateColumn('End', width='small'),
-                    },
-                    key="task_editor",
-                    hide_index=True,
-                    height=50 * (len(tasks_display) + 1),
+            f1, f2 = st.columns([2, 3])
+            with f1:
+                assignee_filter = st.selectbox(
+                    "Filter by assignee",
+                    ["All"] + team_df['name'].tolist(),
+                    key="assignee_filter",
                 )
+            with f2:
+                title_search = st.text_input("Search by title", placeholder="Type to filter tasks...", key="title_search")
 
-                col_save, _ = st.columns([2, 4])
-                if col_save.button("Save all changes", type="primary"):
-                    for idx, row in edited_tasks.iterrows():
-                        orig = tasks[tasks['id'] == idx].iloc[0] if idx in tasks['id'].values else None
-                        today_str = date.today().isoformat()
-                        new_status = row.get('status') or 'Todo'
-                        start_str = str(row['start_date']) if pd.notna(row.get('start_date')) else None
-                        end_str = str(row['end_date']) if pd.notna(row.get('end_date')) else None
+            filtered_tasks = tasks
+            if assignee_filter != "All":
+                filtered_tasks = filtered_tasks[filtered_tasks['assignee'] == assignee_filter]
+            if title_search.strip():
+                filtered_tasks = filtered_tasks[filtered_tasks['title'].str.contains(title_search.strip(), case=False, na=False)]
 
-                        if orig is not None:
-                            old_status = orig.get('status') or 'Todo'
-                            if new_status == 'In Progress' and old_status != 'In Progress' and not start_str:
-                                start_str = today_str
-                            if new_status == 'Done' and old_status != 'Done' and not end_str:
-                                end_str = today_str
-                            if new_status == 'Todo' and old_status != 'Todo':
-                                start_str = None
-                                end_str = None
+            tasks_display = filtered_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+            tasks_display['sprint'] = selected_sprint_name
+            tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date']).dt.date
+            tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date']).dt.date
+            tasks_display['actual_sp'] = tasks_display['actual_sp'].fillna(0).astype(float)
+            tasks_display['_id'] = filtered_tasks['id'].values
+            tasks_display['Delete'] = False
 
-                        update_ticket(
-                            idx, row['ticket_id'], row['title'], row['assignee'], row['category'],
-                            float(row['sp']), float(row.get('actual_sp') or 0.0), new_status, start_str, end_str
-                        )
-                    st.rerun()
+            def _auto_save():
+                edited = st.session_state.get("task_editor", {}).get("edited_rows", {})
+                if not edited:
+                    return
+                for row_idx, changes in edited.items():
+                    if "Delete" in changes:
+                        continue
+                    row = tasks_display.iloc[row_idx]
+                    mongo_id = row['_id']
+                    new_row = {**row.to_dict(), **changes}
+                    orig = tasks[tasks['id'] == mongo_id].iloc[0] if mongo_id in tasks['id'].values else None
+                    today_str = date.today().isoformat()
+                    new_status = new_row.get('status') or 'Todo'
+                    start_str = str(new_row['start_date']) if pd.notna(new_row.get('start_date')) else None
+                    end_str = str(new_row['end_date']) if pd.notna(new_row.get('end_date')) else None
+                    if orig is not None:
+                        old_status = orig.get('status') or 'Todo'
+                        if new_status == 'In Progress' and old_status != 'In Progress' and not start_str:
+                            start_str = today_str
+                        if new_status == 'Done' and old_status != 'Done' and not end_str:
+                            end_str = today_str
+                        if new_status == 'Todo' and old_status != 'Todo':
+                            start_str = None
+                            end_str = None
+                    update_ticket(
+                        mongo_id, new_row['ticket_id'], new_row['title'], new_row['assignee'],
+                        new_row['category'], float(new_row['sp']), float(new_row.get('actual_sp') or 0.0),
+                        new_status, start_str, end_str
+                    )
+                clear_db_caches()
 
-            with tab_delete:
-                st.subheader("Delete tasks")
-                del_cols = st.columns([4, 4, 2, 1, 1])
-                del_cols[0].markdown("**Ticket**")
-                del_cols[1].markdown("**Title**")
-                del_cols[2].markdown("**Assignee**")
-                del_cols[3].markdown("**SP**")
-                del_cols[4].markdown("**Delete**")
-                for _, row in tasks.iterrows():
-                    dc1, dc2, dc3, dc4, dc5 = st.columns([4, 4, 2, 1, 1])
-                    dc1.write(row['ticket_id'])
-                    dc2.write(row['title'])
-                    dc3.write(row['assignee'])
-                    dc4.write(f"{row['sp']:.1f}")
-                    if dc5.button("🗑", key=f"del_{row['id']}", help=f"Delete {row['ticket_id']}"):
+            st.data_editor(
+                tasks_display,
+                column_config={
+                    'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
+                    'ticket_id': st.column_config.TextColumn('Ticket', width='small'),
+                    'title': st.column_config.TextColumn('Title', width='medium'),
+                    'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
+                    'category': st.column_config.SelectboxColumn('Category', options=['New Work', 'Spillover', 'Bug Fix', 'Adhoc'], width='small'),
+                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
+                    'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small'),
+                    'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                    'start_date': st.column_config.DateColumn('Start', width='small'),
+                    'end_date': st.column_config.DateColumn('End', width='small'),
+                    'Delete': st.column_config.CheckboxColumn('Delete', default=False),
+                    '_id': None,
+                },
+                key="task_editor",
+                hide_index=True,
+                num_rows="dynamic",
+                use_container_width=True,
+                disabled=['sprint'],
+                on_change=_auto_save,
+            )
+
+            edited_state = st.session_state.get("task_editor", {})
+            edited_rows = edited_state.get("edited_rows", {})
+            current_data = edited_state.get("data", tasks_display)
+            delete_marked = [
+                (i, current_data.iloc[i])
+                for i, c in edited_rows.items()
+                if c.get("Delete") and i < len(current_data)
+            ]
+            if delete_marked:
+                ticket_list = ", ".join(r['ticket_id'] or r['title'] for _, r in delete_marked)
+                st.warning(f"Marked for deletion: **{ticket_list}**", icon=":material/warning:")
+                if st.button("Confirm delete", type="primary", key="confirm_del"):
+                    deleted = 0
+                    for _, row in delete_marked:
                         delete_ticket(row['ticket_id'])
-                        st.rerun()
+                        deleted += 1
+                    if "task_editor" in st.session_state:
+                        del st.session_state["task_editor"]
+                    clear_db_caches()
+                    st.success(f"Deleted {deleted} task(s).")
+                    st.rerun()
 
         st.divider()
         st.subheader("Sprint velocity summary")
