@@ -55,9 +55,9 @@ else:
 
                 # Calculate capacity details for selected dev using active sprint data
                 dev_row = team_df[team_df['name'] == owner].iloc[0]
-                s_start_dt = pd.to_datetime(active.iloc[0]['start_date'])
-                s_end_dt = pd.to_datetime(active.iloc[0]['end_date'])
-                wk_days = get_workdays(s_start_dt, s_end_dt)
+                s_start_dt = pd.to_datetime(active.iloc[0]['start_date'], format='mixed')
+                s_end_dt = pd.to_datetime(active.iloc[0]['end_date'], format='mixed')
+                wk_days = get_workdays(s_start_dt.date(), s_end_dt.date())
 
                 hols_in_sprint = len(get_holidays(active_s_id, s_start_dt.date(), s_end_dt.date()))
                 leaves_df = get_leaves(active_s_id)
@@ -106,8 +106,8 @@ else:
             st.subheader(f"Backlog for '{selected_sprint_name}' (Read-Only - {selected_s_row['status']})")
             tasks_display = tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
             tasks_display['sprint'] = selected_sprint_name
-            tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date']).dt.date
-            tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date']).dt.date
+            tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date'], format='mixed').dt.date
+            tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date'], format='mixed').dt.date
             st.dataframe(tasks_display.set_index('ticket_id'), use_container_width=True)
 
         elif is_team_user:
@@ -120,8 +120,8 @@ else:
             if not my_tasks.empty:
                 my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
                 my_tasks_display['sprint'] = selected_sprint_name
-                my_tasks_display['start_date'] = pd.to_datetime(my_tasks_display['start_date']).dt.date
-                my_tasks_display['end_date'] = pd.to_datetime(my_tasks_display['end_date']).dt.date
+                my_tasks_display['start_date'] = pd.to_datetime(my_tasks_display['start_date'], format='mixed').dt.date
+                my_tasks_display['end_date'] = pd.to_datetime(my_tasks_display['end_date'], format='mixed').dt.date
                 my_tasks_display['actual_sp'] = my_tasks_display['actual_sp'].fillna(0).astype(float)
                 my_tasks_display = my_tasks_display.set_index('id')
 
@@ -179,8 +179,8 @@ else:
                 st.subheader("Team's Backlog (Read-Only)")
                 other_display = other_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
                 other_display['sprint'] = selected_sprint_name
-                other_display['start_date'] = pd.to_datetime(other_display['start_date']).dt.date
-                other_display['end_date'] = pd.to_datetime(other_display['end_date']).dt.date
+                other_display['start_date'] = pd.to_datetime(other_display['start_date'], format='mixed').dt.date
+                other_display['end_date'] = pd.to_datetime(other_display['end_date'], format='mixed').dt.date
                 other_display['actual_sp'] = other_display['actual_sp'].fillna(0).astype(float)
                 st.dataframe(other_display.set_index('ticket_id'), use_container_width=True)
 
@@ -206,8 +206,8 @@ else:
 
             tasks_display = filtered_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
             tasks_display['sprint'] = selected_sprint_name
-            tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date']).dt.date
-            tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date']).dt.date
+            tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date'], format='mixed').dt.date
+            tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date'], format='mixed').dt.date
             tasks_display['actual_sp'] = tasks_display['actual_sp'].fillna(0).astype(float)
             tasks_display['_id'] = filtered_tasks['id'].values
             tasks_display['Delete'] = False
@@ -306,7 +306,7 @@ else:
         if not done.empty:
             done2 = done.copy()
             done2['Duration'] = done2.apply(
-                lambda r: (pd.to_datetime(r['end_date']) - pd.to_datetime(r['start_date'])).days
+                lambda r: (pd.to_datetime(r['end_date'], format='mixed') - pd.to_datetime(r['start_date'], format='mixed')).days
                 if r.get('end_date') and r.get('start_date') else None, axis=1)
             done2['SP/Day'] = done2.apply(
                 lambda r: round((r.get('actual_sp') or r['sp']) / max(r['Duration'], 1), 2)
