@@ -8,8 +8,8 @@ from utils.db import (
 from utils.helpers import get_workdays
 
 
-def _calc_actual_sp(start_date_val, end_date_val, assignee, team_df):
-    """Return actual SP based on workdays × assignee daily_sp, or None if dates missing."""
+def _calc_actual_sp(start_date_val, end_date_val):
+    """Return actual SP = workdays × 2 SP/day. Both start and end are counted, weekends excluded."""
     try:
         if not start_date_val or not end_date_val:
             return None
@@ -17,15 +17,8 @@ def _calc_actual_sp(start_date_val, end_date_val, assignee, team_df):
         end = pd.to_datetime(end_date_val).date() if not isinstance(end_date_val, date) else end_date_val
         if pd.isna(start) or pd.isna(end):
             return None
-        match = team_df[team_df['name'] == assignee]
-        if match.empty:
-            return None
-        dev = match.iloc[0]
-        if dev.get('role', '') in ['PM', 'EM']:
-            return None
-        daily_sp = float(dev.get('daily_sp', 0.0))
         workdays = get_workdays(start, end)
-        return round(workdays * daily_sp, 2)
+        return round(workdays * 2, 2)
     except Exception:
         return None
 
@@ -186,7 +179,7 @@ else:
                                 start_str = None
                                 end_str = None
 
-                            computed_sp = _calc_actual_sp(start_str, end_str, orig['assignee'], team_df)
+                            computed_sp = _calc_actual_sp(start_str, end_str)
                             actual_sp_val = computed_sp if computed_sp is not None else float(orig.get('actual_sp') or 0.0)
                             update_ticket(
                                 idx, orig['ticket_id'], orig['title'], orig['assignee'], orig['category'],
@@ -260,7 +253,7 @@ else:
                         if new_status == 'Todo' and old_status != 'Todo':
                             start_str = None
                             end_str = None
-                    computed_sp = _calc_actual_sp(start_str, end_str, new_row['assignee'], team_df)
+                    computed_sp = _calc_actual_sp(start_str, end_str)
                     actual_sp_val = computed_sp if computed_sp is not None else float(new_row.get('actual_sp') or 0.0)
                     update_ticket(
                         mongo_id, new_row['ticket_id'], new_row['title'], new_row['assignee'],

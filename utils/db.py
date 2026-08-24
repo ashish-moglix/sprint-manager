@@ -85,6 +85,26 @@ def init_db():
     for coll in ['sprints', 'backlog', 'leaves', 'holidays']:
         db[coll].update_many({"team_id": {"$exists": False}}, {"$set": {"team_id": default_team_id}})
 
+    # 5. Backfill actual_sp for existing tickets that have start/end dates but actual_sp is 0 or None
+    from utils.helpers import get_workdays
+    for ticket in db['backlog'].find({
+        "start_date": {"$ne": None},
+        "end_date": {"$ne": None},
+        "$or": [{"actual_sp": 0.0}, {"actual_sp": None}]
+    }):
+        try:
+            start = pd.to_datetime(ticket["start_date"]).date()
+            end = pd.to_datetime(ticket["end_date"]).date()
+            if pd.notna(start) and pd.notna(end):
+                days = get_workdays(start, end)
+                act_sp = round(days * 2, 2)
+                db['backlog'].update_one(
+                    {"_id": ticket["_id"]},
+                    {"$set": {"actual_sp": float(act_sp)}}
+                )
+        except Exception:
+            pass
+
 # --- SUPER ADMIN DATABASE OPERATIONS ---
 
 def get_teams():
