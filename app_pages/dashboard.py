@@ -434,9 +434,16 @@ else:
             cere_sp = cap_row['Ceremony SP']
             plannable_sp = cap_row['Plannable SP']
             
-            dev_tasks = tasks[tasks['assignee'] == dev_name] if not tasks.empty else pd.DataFrame()
-            tickets = len(dev_tasks)
-            allocated_sp = dev_tasks['sp'].sum() if not dev_tasks.empty else 0.0
+            dev_tasks = tasks[
+                (tasks['backend_assignee'] == dev_name) |
+                (tasks['frontend_assignee'] == dev_name) |
+                (tasks['qa_assignee'] == dev_name)
+            ] if not tasks.empty else pd.DataFrame()
+            tickets = dev_tasks['ticket_id'].nunique() if not dev_tasks.empty else 0
+            backend_sp = dev_tasks[dev_tasks['backend_assignee'] == dev_name]['backend_sp'].sum() if not dev_tasks.empty else 0
+            frontend_sp = dev_tasks[dev_tasks['frontend_assignee'] == dev_name]['frontend_sp'].sum() if not dev_tasks.empty else 0
+            qa_sp = dev_tasks[dev_tasks['qa_assignee'] == dev_name]['qa_sp'].sum() if not dev_tasks.empty else 0
+            allocated_sp = round(backend_sp + frontend_sp + qa_sp, 2)
             
             remaining_sp = max(plannable_sp - allocated_sp, 0.0)
             util_pct = round((allocated_sp / plannable_sp * 100), 1) if plannable_sp > 0 else 0.0

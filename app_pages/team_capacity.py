@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from utils.db import get_sprints, get_team, get_leaves, get_holidays, get_backlog
-from utils.helpers import get_workdays
+from utils.helpers import get_workdays, get_dev_allocated_sp
 
 # Title
 st.title("Team capacity breakdown")
@@ -55,7 +55,7 @@ else:
         adhoc_buf = total_sp * dev_adhoc_p / 100
         cere_buf = total_sp * dev_cere_p / 100
         avail = total_sp - bug_buf - adhoc_buf - cere_buf
-        alloc = tasks[tasks['assignee'] == dev['name']]['sp'].sum() if not tasks.empty else 0
+        alloc = get_dev_allocated_sp(dev['name'], tasks)
         rem = avail - alloc
         rows.append({
             "Name": dev['name'],

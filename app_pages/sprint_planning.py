@@ -4,9 +4,68 @@ from datetime import date
 from utils.db import (
     get_sprints, get_team, get_leaves, get_holidays, get_backlog,
     add_ticket, update_ticket, delete_ticket, clear_db_caches,
-    get_current_team_jira_config, add_ticket_comment, get_ticket_comments
+    get_current_team_jira_config, add_ticket_comment, get_ticket_comments,
+    get_jira_credentials
 )
-from utils.helpers import get_workdays
+from utils.helpers import get_workdays, get_dev_allocated_sp
+
+
+def _freeze_columns_js(editor_key: str, freeze_n: int = 3):
+    """Inject JS that dynamically freezes the first N columns of a GlideDataGrid after render."""
+    return f"""
+<script>
+(function() {{
+    var applied = false;
+    var applyFreeze = function() {{
+        var container = document.querySelector('div.st-key-{editor_key}');
+        if (!container) return;
+        var headers = container.querySelectorAll('[role="columnheader"]');
+        var cells = container.querySelectorAll('[role="gridcell"]');
+        if (headers.length === 0 || cells.length === 0) return;
+        var widths = [];
+        for (var i = 0; i < {freeze_n} && i < headers.length; i++) {{
+            widths.push(headers[i].offsetWidth);
+        }}
+        for (var i = 0; i < {freeze_n} && i < headers.length; i++) {{
+            var left = 0;
+            for (var j = 0; j < i; j++) left += widths[j];
+            headers[i].style.position = 'sticky';
+            headers[i].style.left = left + 'px';
+            headers[i].style.zIndex = '20';
+            headers[i].style.background = 'rgb(241, 242, 243)';
+            if (i < {freeze_n} - 1) {{
+                headers[i].style.borderRight = '1px solid #ddd';
+            }}
+        }}
+        for (var r = 0; r < cells.length; r += headers.length) {{
+            for (var i = 0; i < {freeze_n} && i < headers.length; i++) {{
+                if (r + i >= cells.length) break;
+                var left = 0;
+                for (var j = 0; j < i; j++) left += widths[j];
+                cells[r + i].style.position = 'sticky';
+                cells[r + i].style.left = left + 'px';
+                cells[r + i].style.zIndex = '10';
+                cells[r + i].style.background = '#ffffff';
+                if (i < {freeze_n} - 1) {{
+                    cells[r + i].style.borderRight = '1px solid #ddd';
+                }}
+            }}
+        }}
+        applied = true;
+    }};
+    var retry = 0;
+    var initInterval = setInterval(function() {{
+        applyFreeze();
+        if (applied || ++retry > 60) clearInterval(initInterval);
+    }}, 50);
+    var observer = new MutationObserver(function() {{
+        if (!applied) return;
+        applyFreeze();
+    }});
+    observer.observe(document.body, {{ childList: true, subtree: true }});
+}})();
+</script>
+"""
 
 
 def _calc_actual_sp(start_date_val, end_date_val):
@@ -50,6 +109,8 @@ else:
 
     # JIRA Sync Section
     jira_cfg = get_current_team_jira_config()
+    global_jira = get_jira_credentials()
+    jira_base_url = (global_jira and global_jira.get("base_url")) or jira_cfg.get("url", "") if jira_cfg else ""
     if jira_cfg and jira_cfg.get("board_id"):
         with st.container(border=True):
             st.subheader("JIRA Sync")
@@ -60,7 +121,7 @@ else:
                     with st.spinner("Syncing from JIRA..."):
                         result = sync_sprint_from_jira(
                             selected_s_id, selected_sprint_name,
-                            jira_cfg["board_id"], jira_cfg.get("url", "")
+                            jira_cfg["board_id"], jira_base_url
                         )
                     if result.get("error"):
                         st.warning(result["error"])
@@ -117,7 +178,7 @@ else:
                 dev_avail = total_dev_sp - dev_buffers
 
                 backlog_df = get_backlog(active_s_id)
-                dev_alloced = backlog_df[backlog_df['assignee'] == owner]['sp'].sum() if not backlog_df.empty else 0.0
+                dev_alloced = get_dev_allocated_sp(owner, backlog_df)
                 dev_remaining = dev_avail - dev_alloced
 
                 # Live metric cards
@@ -170,7 +231,8 @@ else:
             col_config = {'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True)}
             if has_jira_col:
                 col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
-            st.dataframe(tasks_display.set_index('ticket_id'), use_container_width=True, column_config=col_config)
+            st.markdown(_freeze_columns_js("backlog_readonly", freeze_n=4), unsafe_allow_html=True)
+            st.dataframe(tasks_display.set_index('ticket_id'), use_container_width=True, column_config=col_config, key="backlog_readonly")
 
         elif is_team_user:
             # Active Sprint, Team User role -> Can only edit own tasks
@@ -216,6 +278,8 @@ else:
                 }
                 if has_jira_col:
                     my_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+
+                st.markdown(_freeze_columns_js("my_task_editor", freeze_n=3), unsafe_allow_html=True)
 
                 edited_my_tasks = st.data_editor(
                     my_tasks_display,
@@ -292,13 +356,14 @@ else:
                 other_col_config = {}
                 if has_jira_col:
                     other_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
-                st.dataframe(other_display.set_index('ticket_id'), use_container_width=True, column_config=other_col_config)
+                st.markdown(_freeze_columns_js("team_backlog_readonly", freeze_n=4), unsafe_allow_html=True)
+                st.dataframe(other_display.set_index('ticket_id'), use_container_width=True, column_config=other_col_config, key="team_backlog_readonly")
 
         else:
             # Active Sprint, Scrum Master/Admin/PM role -> Full edit privileges!
             st.subheader("Task tracker (Active Sprint)")
 
-            f1, f2 = st.columns([2, 3])
+            f1, f2 = st.columns(2)
             with f1:
                 assignee_filter = st.selectbox(
                     "Filter by assignee",
@@ -306,7 +371,9 @@ else:
                     key="assignee_filter",
                 )
             with f2:
-                title_search = st.text_input("Search by title", placeholder="Type to filter tasks...", key="title_search")
+                ticket_search = st.text_input("Search by ticket ID", placeholder="e.g. CT-361", key="ticket_search")
+
+            title_search = st.text_input("Search by title", placeholder="Type to filter tasks...", key="title_search_admin")
 
             filtered_tasks = tasks
             if assignee_filter != "All":
@@ -318,6 +385,8 @@ else:
                     (filtered_tasks['qa_assignee'] == assignee_filter)
                 )
                 filtered_tasks = filtered_tasks[mask]
+            if ticket_search.strip():
+                filtered_tasks = filtered_tasks[filtered_tasks['ticket_id'].str.contains(ticket_search.strip(), case=False, na=False)]
             if title_search.strip():
                 filtered_tasks = filtered_tasks[filtered_tasks['title'].str.contains(title_search.strip(), case=False, na=False)]
 
@@ -415,6 +484,8 @@ else:
                 admin_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
                 admin_col_config['jira_push_status'] = st.column_config.TextColumn('Sync', width='small', disabled=True)
 
+            st.markdown(_freeze_columns_js("task_editor", freeze_n=4), unsafe_allow_html=True)
+
             st.data_editor(
                 tasks_display,
                 column_config=admin_col_config,
@@ -422,8 +493,9 @@ else:
                 hide_index=True,
                 num_rows="dynamic",
                 use_container_width=True,
-                disabled=['sprint', 'ticket_id', 'title', 'assignee', 'category', 'actual_sp'],
+                disabled=['sprint', 'ticket_id', 'title', 'category', 'actual_sp'],
                 on_change=_auto_save,
+                height=len(tasks_display) * 30,
             )
 
             edited_state = st.session_state.get("task_editor", {})
