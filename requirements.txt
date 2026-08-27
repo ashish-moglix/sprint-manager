@@ -48,3 +48,4 @@ urllib3==2.7.0
 uvicorn==0.51.0
 watchdog==6.0.0
 websockets==16.0
+cryptography>=41.0.0

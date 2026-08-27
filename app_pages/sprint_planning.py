@@ -3,7 +3,8 @@ import pandas as pd
 from datetime import date
 from utils.db import (
     get_sprints, get_team, get_leaves, get_holidays, get_backlog,
-    add_ticket, update_ticket, delete_ticket, clear_db_caches
+    add_ticket, update_ticket, delete_ticket, clear_db_caches,
+    get_current_team_jira_config, add_ticket_comment, get_ticket_comments
 )
 from utils.helpers import get_workdays
 
@@ -46,6 +47,30 @@ else:
     selected_s_row = sprints_df[sprints_df['name'] == selected_sprint_name].iloc[0]
     selected_s_id = selected_s_row['id']
     is_selected_active = (selected_sprint_name == active_sprint_name)
+
+    # JIRA Sync Section
+    jira_cfg = get_current_team_jira_config()
+    if jira_cfg and jira_cfg.get("board_id"):
+        with st.container(border=True):
+            st.subheader("JIRA Sync")
+            c_sync, c_info = st.columns([1, 3])
+            with c_sync:
+                if st.button("Sync from JIRA", help="Fetch new tickets from JIRA board"):
+                    from utils.jira_sync import sync_sprint_from_jira
+                    with st.spinner("Syncing from JIRA..."):
+                        result = sync_sprint_from_jira(
+                            selected_s_id, selected_sprint_name,
+                            jira_cfg["board_id"], jira_cfg.get("url", "")
+                        )
+                    if result.get("error"):
+                        st.warning(result["error"])
+                    elif result["added"] > 0:
+                        st.success(f"Added {result['added']} new ticket(s) from JIRA. {result['skipped']} already existed.")
+                        st.rerun()
+                    else:
+                        st.info("No new tickets found in JIRA. All tickets already synced.")
+            with c_info:
+                st.caption(f"Board ID: {jira_cfg['board_id']} | Syncs tickets from JIRA sprint '{selected_sprint_name}'")
 
     # 1. Add New Ticket Section (Only for active sprint, only if active sprint exists, and only for non-Team Users)
     if not is_team_user:
@@ -115,15 +140,21 @@ else:
 
     st.divider()
     tasks = get_backlog(selected_s_id)
+    has_jira_col = "jira_url" in tasks.columns and tasks["jira_url"].notna().any()
 
     if not tasks.empty:
         if not is_selected_active:
             st.subheader(f"Backlog for '{selected_sprint_name}' (Read-Only - {selected_s_row['status']})")
             tasks_display = tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+            if has_jira_col:
+                tasks_display['jira_url'] = tasks['jira_url']
             tasks_display['sprint'] = selected_sprint_name
             tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date'], format='mixed').dt.date
             tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date'], format='mixed').dt.date
-            st.dataframe(tasks_display.set_index('ticket_id'), use_container_width=True)
+            col_config = {'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True)}
+            if has_jira_col:
+                col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+            st.dataframe(tasks_display.set_index('ticket_id'), use_container_width=True, column_config=col_config)
 
         elif is_team_user:
             # Active Sprint, Team User role -> Can only edit own tasks
@@ -134,26 +165,32 @@ else:
             st.subheader("My Assigned Tasks (Active Sprint)")
             if not my_tasks.empty:
                 my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+                if has_jira_col:
+                    my_tasks_display['jira_url'] = my_tasks['jira_url']
                 my_tasks_display['sprint'] = selected_sprint_name
                 my_tasks_display['start_date'] = pd.to_datetime(my_tasks_display['start_date'], format='mixed').dt.date
                 my_tasks_display['end_date'] = pd.to_datetime(my_tasks_display['end_date'], format='mixed').dt.date
                 my_tasks_display['actual_sp'] = my_tasks_display['actual_sp'].fillna(0).astype(float)
                 my_tasks_display = my_tasks_display.set_index('id')
 
+                my_col_config={
+                    'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
+                    'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
+                    'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
+                    'assignee': st.column_config.TextColumn('Assignee', width='small', disabled=True),
+                    'category': st.column_config.TextColumn('Category', width='small', disabled=True),
+                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
+                    'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                    'start_date': st.column_config.DateColumn('Start', width='small'),
+                    'end_date': st.column_config.DateColumn('End', width='small'),
+                }
+                if has_jira_col:
+                    my_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+
                 edited_my_tasks = st.data_editor(
                     my_tasks_display,
-                    column_config={
-                        'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
-                        'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
-                        'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
-                        'assignee': st.column_config.TextColumn('Assignee', width='small', disabled=True),
-                        'category': st.column_config.TextColumn('Category', width='small', disabled=True),
-                        'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
-                        'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
-                        'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                        'start_date': st.column_config.DateColumn('Start', width='small'),
-                        'end_date': st.column_config.DateColumn('End', width='small'),
-                    },
+                    column_config=my_col_config,
                     key="my_task_editor",
                     hide_index=True,
                     num_rows="dynamic",
@@ -195,11 +232,16 @@ else:
             if not other_tasks.empty:
                 st.subheader("Team's Backlog (Read-Only)")
                 other_display = other_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+                if has_jira_col:
+                    other_display['jira_url'] = other_tasks['jira_url']
                 other_display['sprint'] = selected_sprint_name
                 other_display['start_date'] = pd.to_datetime(other_display['start_date'], format='mixed').dt.date
                 other_display['end_date'] = pd.to_datetime(other_display['end_date'], format='mixed').dt.date
                 other_display['actual_sp'] = other_display['actual_sp'].fillna(0).astype(float)
-                st.dataframe(other_display.set_index('ticket_id'), use_container_width=True)
+                other_col_config = {}
+                if has_jira_col:
+                    other_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+                st.dataframe(other_display.set_index('ticket_id'), use_container_width=True, column_config=other_col_config)
 
         else:
             # Active Sprint, Scrum Master/Admin/PM role -> Full edit privileges!
@@ -222,6 +264,9 @@ else:
                 filtered_tasks = filtered_tasks[filtered_tasks['title'].str.contains(title_search.strip(), case=False, na=False)]
 
             tasks_display = filtered_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+            if has_jira_col:
+                tasks_display['jira_url'] = filtered_tasks['jira_url']
+                tasks_display['jira_push_status'] = filtered_tasks.get('jira_push_status', None)
             tasks_display['sprint'] = selected_sprint_name
             tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date'], format='mixed').dt.date
             tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date'], format='mixed').dt.date
@@ -262,22 +307,27 @@ else:
                     )
                 clear_db_caches()
 
+            admin_col_config={
+                'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
+                'ticket_id': st.column_config.TextColumn('Ticket', width='small'),
+                'title': st.column_config.TextColumn('Title', width='medium'),
+                'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
+                'category': st.column_config.SelectboxColumn('Category', options=['New Work', 'Spillover', 'Bug Fix', 'Adhoc'], width='small'),
+                'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
+                'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                'start_date': st.column_config.DateColumn('Start', width='small'),
+                'end_date': st.column_config.DateColumn('End', width='small'),
+                'Delete': st.column_config.CheckboxColumn('Delete', default=False),
+                '_id': None,
+            }
+            if has_jira_col:
+                admin_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+                admin_col_config['jira_push_status'] = st.column_config.TextColumn('Sync', width='small', disabled=True)
+
             st.data_editor(
                 tasks_display,
-                column_config={
-                    'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
-                    'ticket_id': st.column_config.TextColumn('Ticket', width='small'),
-                    'title': st.column_config.TextColumn('Title', width='medium'),
-                    'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
-                    'category': st.column_config.SelectboxColumn('Category', options=['New Work', 'Spillover', 'Bug Fix', 'Adhoc'], width='small'),
-                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
-                    'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
-                    'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                    'start_date': st.column_config.DateColumn('Start', width='small'),
-                    'end_date': st.column_config.DateColumn('End', width='small'),
-                    'Delete': st.column_config.CheckboxColumn('Delete', default=False),
-                    '_id': None,
-                },
+                column_config=admin_col_config,
                 key="task_editor",
                 hide_index=True,
                 num_rows="dynamic",
@@ -307,6 +357,13 @@ else:
                     clear_db_caches()
                     st.success(f"Deleted {deleted} task(s).")
                     st.rerun()
+
+            # Push to JIRA section - hidden until field mapping is finalized
+            # TODO: Re-enable once we have all field IDs (start date, end date, actual SP) configured
+            # if has_jira_col and jira_cfg:
+            #     st.divider()
+            #     st.subheader("Push to JIRA")
+            #     ... (push buttons and comments expander hidden for now)
 
         st.divider()
         st.subheader("Sprint velocity summary")

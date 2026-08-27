@@ -7,7 +7,7 @@ from utils.db import (
 
 st.title("Super admin console")
 
-tabs = st.tabs(["Manage teams", "Manage users & admins"])
+tabs = st.tabs(["Manage teams", "Manage users & admins", "JIRA Configuration"])
 
 # Manage Teams tab
 with tabs[0]:
@@ -202,3 +202,108 @@ with tabs[1]:
                     delete_team_member(user_row['id'])
                     st.success("User deleted successfully.")
                     st.rerun()
+
+# JIRA Configuration tab
+with tabs[2]:
+    st.subheader("JIRA Connection Settings")
+    st.markdown("Configure JIRA credentials for sprint sync. Credentials are encrypted and stored securely.")
+
+    from utils.db import get_jira_credentials, save_jira_credentials
+
+    # Load existing config
+    existing = get_jira_credentials()
+    base_url_val = existing.get("base_url", "") if existing else ""
+    email_val = existing.get("email", "") if existing else ""
+    sp_field_val = existing.get("story_points_field", "customfield_10119") if existing else "customfield_10119"
+    start_date_field = existing.get("start_date_field", "") if existing else ""
+    end_date_field = existing.get("end_date_field", "") if existing else ""
+    actual_sp_field = existing.get("actual_sp_field", "") if existing else ""
+
+    with st.form("jira_config_form"):
+        st.markdown("### Connection Details")
+        c1, c2 = st.columns(2)
+        with c1:
+            jira_base_url = st.text_input(
+                "JIRA Base URL",
+                value=base_url_val,
+                placeholder="https://yourcompany.atlassian.net",
+                help="Your JIRA instance URL"
+            )
+            jira_email = st.text_input(
+                "JIRA Email",
+                value=email_val,
+                placeholder="user@company.com",
+                help="Email used for JIRA API authentication"
+            )
+        with c2:
+            jira_token = st.text_input(
+                "Access Token",
+                value="",
+                type="password",
+                placeholder="Leave blank to keep existing token",
+                help="API token for JIRA (create at https://id.atlassian.com/manage-profile/security/api-tokens)"
+            )
+            jira_sp_field = st.text_input(
+                "Story Points Field ID",
+                value=sp_field_val,
+                placeholder="customfield_10119",
+                help="Custom field ID for story points in JIRA"
+            )
+
+        st.markdown("### Custom Field Mappings (Optional)")
+        c3, c4 = st.columns(2)
+        with c3:
+            jira_start_date_field = st.text_input(
+                "Start Date Field ID",
+                value=start_date_field,
+                placeholder="e.g. customfield_10310",
+                help="Optional: custom field ID for start date"
+            )
+            jira_actual_sp_field = st.text_input(
+                "Actual SP Field ID",
+                value=actual_sp_field,
+                placeholder="e.g. customfield_10119",
+                help="Optional: custom field ID for actual story points"
+            )
+        with c4:
+            jira_end_date_field = st.text_input(
+                "End Date Field ID",
+                value=end_date_field,
+                placeholder="e.g. customfield_10332",
+                help="Optional: custom field ID for end date"
+            )
+
+        if st.form_submit_button("Save JIRA Configuration", type="primary"):
+            if jira_base_url.strip() and jira_email.strip():
+                token = jira_token.strip() if jira_token.strip() else (existing.get("token") if existing else "")
+                if token:
+                    save_jira_credentials(
+                        token,
+                        jira_email.strip(),
+                        jira_base_url.strip(),
+                        jira_sp_field.strip(),
+                        start_date_field=jira_start_date_field.strip() if jira_start_date_field.strip() else None,
+                        end_date_field=jira_end_date_field.strip() if jira_end_date_field.strip() else None,
+                        actual_sp_field=jira_actual_sp_field.strip() if jira_actual_sp_field.strip() else None
+                    )
+                    st.success("JIRA credentials saved securely.")
+                    st.rerun()
+                else:
+                    st.error("Access Token is required.")
+            else:
+                st.error("Base URL and Email are required.")
+
+    # Show current status
+    st.divider()
+    if existing:
+        masked_token = existing.get("token", "")
+        if len(masked_token) > 10:
+            masked_token = masked_token[:6] + "..." + masked_token[-4:]
+        sp = existing.get('story_points_field', 'N/A')
+        start = existing.get('start_date_field', 'N/A')
+        end = existing.get('end_date_field', 'N/A')
+        actual = existing.get('actual_sp_field', 'N/A')
+        st.success(f"Credentials configured. Token: `{masked_token}` | URL: {existing.get('base_url', '')}")
+        st.caption(f"Story Points: {sp} | Start Date: {start} | End Date: {end} | Actual SP: {actual}")
+    else:
+        st.info("No JIRA credentials configured. Enter your details above to enable JIRA sync.")

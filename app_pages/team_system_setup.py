@@ -3,7 +3,8 @@ import pandas as pd
 from utils.db import (
     get_sprints, get_team, add_team_member, update_team_member, delete_team_member,
     create_sprint, start_sprint, stop_sprint, update_sprint, delete_sprint, DuplicateUserError,
-    update_team_member_fields, get_mongo_db, clear_db_caches
+    update_team_member_fields, get_mongo_db, clear_db_caches,
+    get_current_team_jira_config, update_team_jira_config
 )
 from bson import ObjectId
 # Title
@@ -60,7 +61,7 @@ with t_abs[0]:
     if team_df.empty:
         st.info("No team members found.", icon=":material/info:")
     else:
-        roster_cols = ['name', 'email', 'user_role', 'role', 'daily_sp', 'bug_p', 'adhoc_p', 'ceremony_p']
+        roster_cols = ['name', 'email', 'jira_account_id', 'user_role', 'role', 'daily_sp', 'bug_p', 'adhoc_p', 'ceremony_p']
         team_display = team_df.drop(columns=['password', 'team_id'], errors='ignore').set_index('id')
         
         # Display editable roster only for Admin
@@ -105,6 +106,7 @@ with t_abs[0]:
                 column_config={
                     "name": st.column_config.TextColumn("Full name"),
                     "email": st.column_config.TextColumn("Email"),
+                    "jira_account_id": st.column_config.TextColumn("JIRA Account ID", width="small", help="JIRA accountId for assignee matching (find in JIRA profile URL or user management)"),
                     "user_role": st.column_config.SelectboxColumn("User role", options=["Team Admin", "Team User"]),
                     "role": st.column_config.SelectboxColumn("Developer role", options=["Backend", "Frontend", "QA", "PM", "EM"]),
                     "daily_sp": st.column_config.NumberColumn("Daily SP", min_value=0.0, step=0.5),
@@ -142,12 +144,33 @@ with t_abs[0]:
         else:
             # For Team Users, show as a read-only dataframe, omitting passwords
             read_only_df = team_df.drop(columns=['password'], errors='ignore')
-            st.dataframe(read_only_df.set_index('name')[['email', 'role', 'daily_sp', 'bug_p', 'adhoc_p', 'ceremony_p']])
+            st.dataframe(read_only_df.set_index('name')[['email', 'jira_account_id', 'role', 'daily_sp', 'bug_p', 'adhoc_p', 'ceremony_p']])
 
 # Manage sprints tab
 with t_abs[1]:
     sprints_df = get_sprints()
-    
+
+    # JIRA Board Configuration (Team Admin only)
+    if user_role == 'Team Admin':
+        jira_cfg = get_current_team_jira_config() or {}
+        with st.form("jira_board_config_form"):
+            st.subheader("JIRA Board Configuration")
+            st.markdown("Connect this team to a JIRA board to auto-sync sprint tickets.")
+            jira_board_id = st.text_input(
+                "JIRA Board ID",
+                value=jira_cfg.get("board_id", ""),
+                placeholder="e.g. 123",
+                help="Find this in JIRA: Board settings > Board ID"
+            )
+            if st.form_submit_button("Save JIRA Board Config", type="primary"):
+                tid = st.session_state.user.get("team_id")
+                if jira_board_id.strip():
+                    update_team_jira_config(tid, jira_board_id.strip(), "", None)
+                    st.success("JIRA board configuration saved.")
+                    st.rerun()
+                else:
+                    st.error("Board ID is required to enable JIRA sync.")
+
     if user_role == 'Team Admin':
         st.subheader("Manage Sprint Lifecycle")
         
@@ -186,7 +209,25 @@ with t_abs[1]:
                         draft_id = drafts_df[drafts_df['name'] == sel_draft].iloc[0]['id']
                         try:
                             start_sprint(draft_id, act_start_date)
-                            st.success(f"Sprint '{sel_draft}' is now Active.")
+                            # Auto-sync from JIRA if team has JIRA config
+                            jira_cfg = get_current_team_jira_config()
+                            if jira_cfg and jira_cfg.get("board_id"):
+                                from utils.jira_client import _base_url
+                                from utils.jira_sync import sync_sprint_from_jira
+                                base_url = _base_url()
+                                with st.spinner("Syncing tickets from JIRA..."):
+                                    result = sync_sprint_from_jira(
+                                        draft_id, sel_draft,
+                                        jira_cfg["board_id"], base_url
+                                    )
+                                if result.get("added", 0) > 0:
+                                    st.success(f"Sprint '{sel_draft}' is now Active. Synced {result['added']} ticket(s) from JIRA.")
+                                elif result.get("error"):
+                                    st.warning(f"Sprint started, but JIRA sync: {result['error']}")
+                                else:
+                                    st.success(f"Sprint '{sel_draft}' is now Active. No new JIRA tickets found.")
+                            else:
+                                st.success(f"Sprint '{sel_draft}' is now Active.")
                             st.rerun()
                         except ValueError as e:
                             st.error(str(e))

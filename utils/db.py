@@ -173,9 +173,11 @@ def get_team():
     cursor = db['users'].find({"team_id": str(tid), "user_role": {"$ne": "Super Admin"}})
     df = pd.DataFrame(list(cursor))
     if df.empty:
-        df = pd.DataFrame(columns=['id', 'name', 'role', 'daily_sp', 'bug_p', 'adhoc_p', 'ceremony_p', 'email', 'user_role', 'team_id'])
+        df = pd.DataFrame(columns=['id', 'name', 'role', 'daily_sp', 'bug_p', 'adhoc_p', 'ceremony_p', 'email', 'user_role', 'team_id', 'jira_account_id'])
     else:
         df['id'] = df['_id'].astype(str)
+        if 'jira_account_id' not in df.columns:
+            df['jira_account_id'] = None
     return df
 
 def get_leaves(sprint_id):
@@ -267,7 +269,8 @@ def get_backlog(sprint_id):
     tid = get_current_team_id()
     cursor = db['backlog'].find({"team_id": str(tid), "sprint_id": str(sprint_id)})
     df = pd.DataFrame(list(cursor))
-    expected_cols = ['id', 'sprint_id', 'ticket_id', 'title', 'assignee', 'role', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date', 'team_id']
+    expected_cols = ['id', 'sprint_id', 'ticket_id', 'title', 'assignee', 'role', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date', 'team_id',
+                    'jira_key', 'jira_url', 'jira_status', 'jira_push_status', 'synced_from_jira', 'jira_comments', 'local_comments']
     if not df.empty:
         df['id'] = df['_id'].astype(str)
         for col in expected_cols:
@@ -395,8 +398,8 @@ def add_team_member(name, role, bug_p=15.0, adhoc_p=10.0, ceremony_p=10.0, email
     else:
         email = email.strip()
         
-    # Ensure email or name is unique across all teams
-    existing = db['users'].find_one({"$or": [{"email": email}, {"name": name}]})
+    # Ensure email is unique across all teams
+    existing = db['users'].find_one({"email": email})
     if existing:
         ex_team_id = existing.get("team_id")
         team_name = "Another Team"
@@ -544,6 +547,205 @@ def delete_sprint(sprint_name):
         db['holidays'].delete_many({"team_id": str(tid), "sprint_id": sid})
         db['sprints'].delete_one({"_id": spr['_id']})
     clear_db_caches()
+
+# --- JIRA INTEGRATION ---
+
+def update_team_jira_config(team_id, jira_board_id, jira_url, jira_story_points_field=None):
+    """Store JIRA board ID, base URL, and story points field on the team document."""
+    db = get_mongo_db()
+    fields = {
+        "jira_board_id": jira_board_id,
+        "jira_url": jira_url.rstrip("/") if jira_url else None
+    }
+    if jira_story_points_field:
+        fields["jira_story_points_field"] = jira_story_points_field
+    db['teams'].update_one(
+        {"_id": ObjectId(team_id)},
+        {"$set": fields}
+    )
+    clear_db_caches()
+
+def get_team_jira_config(team_id):
+    """Get JIRA config for a team. Returns dict with board_id, url, story_points_field or None."""
+    db = get_mongo_db()
+    team = db['teams'].find_one({"_id": ObjectId(team_id)})
+    if not team or not team.get("jira_board_id"):
+        return None
+    return {
+        "board_id": team["jira_board_id"],
+        "url": team.get("jira_url", ""),
+        "story_points_field": team.get("jira_story_points_field", "customfield_10119")
+    }
+
+def get_current_team_jira_config():
+    """Convenience: JIRA config for the current session's team."""
+    tid = get_current_team_id()
+    if not tid:
+        return None
+    return get_team_jira_config(tid)
+
+
+# --- JIRA CREDENTIAL STORAGE (ENCRYPTED) ---
+
+def save_jira_credentials(token, email, base_url, story_points_field=None, start_date_field=None, end_date_field=None, actual_sp_field=None):
+    """Encrypt and store JIRA connection credentials in the jira_config collection."""
+    from utils.encryption import encrypt_value
+    db = get_mongo_db()
+    doc = {
+        "_id": "global_jira_config",
+        "encrypted_token": encrypt_value(token),
+        "encrypted_email": encrypt_value(email),
+        "encrypted_base_url": encrypt_value(base_url.rstrip("/") if base_url else ""),
+        "encrypted_sp_field": encrypt_value(story_points_field) if story_points_field else None,
+        "encrypted_start_date_field": encrypt_value(start_date_field) if start_date_field else None,
+        "encrypted_end_date_field": encrypt_value(end_date_field) if end_date_field else None,
+        "encrypted_actual_sp_field": encrypt_value(actual_sp_field) if actual_sp_field else None,
+        "updated_at": __import__('datetime').datetime.utcnow().isoformat(),
+    }
+    db['jira_config'].replace_one({"_id": doc["_id"]}, doc, upsert=True)
+    clear_db_caches()
+
+
+def get_jira_credentials():
+    """Retrieve and decrypt JIRA credentials. Returns dict or None."""
+    from utils.encryption import decrypt_value
+    db = get_mongo_db()
+    doc = db['jira_config'].find_one({"_id": "global_jira_config"})
+    if not doc:
+        return None
+    try:
+        return {
+            "token": decrypt_value(doc["encrypted_token"]),
+            "email": decrypt_value(doc["encrypted_email"]),
+            "base_url": decrypt_value(doc["encrypted_base_url"]),
+            "story_points_field": decrypt_value(doc["encrypted_sp_field"]) if doc.get("encrypted_sp_field") else None,
+            "start_date_field": decrypt_value(doc["encrypted_start_date_field"]) if doc.get("encrypted_start_date_field") else None,
+            "end_date_field": decrypt_value(doc["encrypted_end_date_field"]) if doc.get("encrypted_end_date_field") else None,
+            "actual_sp_field": decrypt_value(doc["encrypted_actual_sp_field"]) if doc.get("encrypted_actual_sp_field") else None,
+        }
+    except Exception:
+        return None
+
+
+def clear_jira_credentials():
+    """Remove stored JIRA credentials."""
+    db = get_mongo_db()
+    db['jira_config'].delete_one({"_id": "global_jira_config"})
+    clear_db_caches()
+
+def update_sprint_jira_fields(sprint_id, jira_sprint_id=None, last_sync=None, enabled=None):
+    """Update JIRA sync metadata on a sprint."""
+    db = get_mongo_db()
+    fields = {}
+    if jira_sprint_id is not None:
+        fields["jira_sprint_id"] = jira_sprint_id
+    if last_sync is not None:
+        fields["last_jira_sync"] = last_sync
+    if enabled is not None:
+        fields["jira_sync_enabled"] = enabled
+    if fields:
+        db['sprints'].update_one(
+            {"_id": ObjectId(sprint_id)},
+            {"$set": fields}
+        )
+        clear_db_caches()
+
+def get_tickets_by_jira_keys(sprint_id, jira_keys):
+    """Find existing tickets in a sprint by their JIRA keys. Returns set of jira_key strings."""
+    db = get_mongo_db()
+    tid = get_current_team_id()
+    cursor = db['backlog'].find({
+        "team_id": str(tid),
+        "sprint_id": str(sprint_id),
+        "jira_key": {"$in": list(jira_keys)}
+    })
+    return {t["jira_key"] for t in cursor if t.get("jira_key")}
+
+
+# --- JIRA USER LINKING ---
+
+def get_user_jira_account_id(user_name):
+    """Get JIRA accountId for a team member by name. Returns str or None."""
+    db = get_mongo_db()
+    tid = get_current_team_id()
+    user = db['users'].find_one({"team_id": str(tid), "name": user_name})
+    if user:
+        return user.get("jira_account_id")
+    return None
+
+def update_user_jira_account_id(user_id, jira_account_id):
+    """Store JIRA accountId on a user document for assignee matching."""
+    db = get_mongo_db()
+    db['users'].update_one(
+        {"_id": ObjectId(user_id)},
+        {"$set": {"jira_account_id": jira_account_id.strip() if jira_account_id else None}}
+    )
+    clear_db_caches()
+
+
+# --- JIRA PUSH TRACKING ---
+
+def update_ticket_jira_push_status(sprint_id, ticket_id, status, timestamp):
+    """Update the JIRA push status of a ticket."""
+    db = get_mongo_db()
+    tid = get_current_team_id()
+    db['backlog'].update_one(
+        {"team_id": str(tid), "sprint_id": str(sprint_id), "ticket_id": ticket_id},
+        {"$set": {"jira_push_status": status, "last_jira_push": timestamp}}
+    )
+    clear_db_caches()
+
+
+# --- COMMENTS ---
+
+def add_ticket_comment(sprint_id, ticket_id, author, email, body):
+    """Add a local comment to a ticket."""
+    db = get_mongo_db()
+    tid = get_current_team_id()
+    from datetime import datetime, timezone
+    comment = {
+        "author": author,
+        "email": email,
+        "body": body,
+        "created": datetime.now(timezone.utc).isoformat(),
+        "source": "local",
+        "synced": False,
+    }
+    db['backlog'].update_one(
+        {"team_id": str(tid), "sprint_id": str(sprint_id), "ticket_id": ticket_id},
+        {"$push": {"local_comments": comment}}
+    )
+    clear_db_caches()
+
+def get_ticket_comments(sprint_id, ticket_id):
+    """Get all comments for a ticket (local + cached JIRA). Returns list of comment dicts."""
+    db = get_mongo_db()
+    tid = get_current_team_id()
+    ticket = db['backlog'].find_one({
+        "team_id": str(tid),
+        "sprint_id": str(sprint_id),
+        "ticket_id": ticket_id
+    })
+    if not ticket:
+        return []
+    comments = []
+    for c in ticket.get("jira_comments", []):
+        comments.append(c)
+    for c in ticket.get("local_comments", []):
+        comments.append(c)
+    comments.sort(key=lambda x: x.get("created", ""))
+    return comments
+
+def update_ticket_jira_comments(sprint_id, ticket_id, comments):
+    """Cache JIRA comments locally on the ticket."""
+    db = get_mongo_db()
+    tid = get_current_team_id()
+    db['backlog'].update_one(
+        {"team_id": str(tid), "sprint_id": str(sprint_id), "ticket_id": ticket_id},
+        {"$set": {"jira_comments": comments}}
+    )
+    clear_db_caches()
+
 
 def save_sprint_report(report_doc):
     """Save or replace a sprint report."""
