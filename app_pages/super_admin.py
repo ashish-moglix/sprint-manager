@@ -210,14 +210,14 @@ with tabs[2]:
 
     from utils.db import get_jira_credentials, save_jira_credentials
 
-    # Load existing config
+    # Load existing config and ensure no None values are passed to Streamlit input widgets
     existing = get_jira_credentials()
-    base_url_val = existing.get("base_url", "") if existing else ""
-    email_val = existing.get("email", "") if existing else ""
-    sp_field_val = existing.get("story_points_field", "customfield_10119") if existing else "customfield_10119"
-    start_date_field = existing.get("start_date_field", "") if existing else ""
-    end_date_field = existing.get("end_date_field", "") if existing else ""
-    actual_sp_field = existing.get("actual_sp_field", "") if existing else ""
+    base_url_val = (existing.get("base_url") or "") if existing else ""
+    email_val = (existing.get("email") or "") if existing else ""
+    sp_field_val = (existing.get("story_points_field") or "customfield_10119") if existing else "customfield_10119"
+    start_date_field = (existing.get("start_date_field") or "") if existing else ""
+    end_date_field = (existing.get("end_date_field") or "") if existing else ""
+    actual_sp_field = (existing.get("actual_sp_field") or "") if existing else ""
 
     with st.form("jira_config_form"):
         st.markdown("### Connection Details")
@@ -274,17 +274,26 @@ with tabs[2]:
             )
 
         if st.form_submit_button("Save JIRA Configuration", type="primary"):
-            if jira_base_url.strip() and jira_email.strip():
-                token = jira_token.strip() if jira_token.strip() else (existing.get("token") if existing else "")
+            # Ensure safe string checks on form values (they could be None if widgets fail)
+            base_url_str = (jira_base_url or "").strip()
+            email_str = (jira_email or "").strip()
+            token_str = (jira_token or "").strip()
+            sp_field_str = (jira_sp_field or "").strip()
+            start_date_str = (jira_start_date_field or "").strip()
+            end_date_str = (jira_end_date_field or "").strip()
+            actual_sp_str = (jira_actual_sp_field or "").strip()
+
+            if base_url_str and email_str:
+                token = token_str if token_str else (existing.get("token") if existing else "")
                 if token:
                     save_jira_credentials(
                         token,
-                        jira_email.strip(),
-                        jira_base_url.strip(),
-                        jira_sp_field.strip(),
-                        start_date_field=jira_start_date_field.strip() if jira_start_date_field.strip() else None,
-                        end_date_field=jira_end_date_field.strip() if jira_end_date_field.strip() else None,
-                        actual_sp_field=jira_actual_sp_field.strip() if jira_actual_sp_field.strip() else None
+                        email_str,
+                        base_url_str,
+                        sp_field_str,
+                        start_date_field=start_date_str if start_date_str else None,
+                        end_date_field=end_date_str if end_date_str else None,
+                        actual_sp_field=actual_sp_str if actual_sp_str else None
                     )
                     st.success("JIRA credentials saved securely.")
                     st.rerun()

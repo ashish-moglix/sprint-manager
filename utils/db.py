@@ -105,6 +105,25 @@ def init_db():
         except Exception:
             pass
 
+    # 6. Backfill new role-specific fields for existing tickets
+    new_fields = {
+        'backend_assignee': None, 'frontend_assignee': None, 'qa_assignee': None,
+        'backend_sp': 0.0, 'frontend_sp': 0.0, 'qa_sp': 0.0,
+        'backend_start_date': None, 'backend_end_date': None,
+        'frontend_start_date': None, 'frontend_end_date': None,
+        'qa_start_date': None, 'qa_end_date': None,
+        'backend_status': 'Todo', 'frontend_status': 'Todo', 'qa_status': 'Todo',
+    }
+    try:
+        for field in new_fields:
+            db['backlog'].update_many(
+                {field: {"$exists": False}},
+                {"$set": {field: new_fields[field]}}
+            )
+            clear_db_caches()
+    except Exception:
+        pass
+
 # --- SUPER ADMIN DATABASE OPERATIONS ---
 
 def get_teams():
@@ -270,7 +289,13 @@ def get_backlog(sprint_id):
     cursor = db['backlog'].find({"team_id": str(tid), "sprint_id": str(sprint_id)})
     df = pd.DataFrame(list(cursor))
     expected_cols = ['id', 'sprint_id', 'ticket_id', 'title', 'assignee', 'role', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date', 'team_id',
-                    'jira_key', 'jira_url', 'jira_status', 'jira_push_status', 'synced_from_jira', 'jira_comments', 'local_comments']
+                    'jira_key', 'jira_url', 'jira_status', 'jira_push_status', 'synced_from_jira', 'jira_comments', 'local_comments',
+                    'backend_assignee', 'frontend_assignee', 'qa_assignee',
+                    'backend_sp', 'frontend_sp', 'qa_sp',
+                    'backend_start_date', 'backend_end_date',
+                    'frontend_start_date', 'frontend_end_date',
+                    'qa_start_date', 'qa_end_date',
+                    'backend_status', 'frontend_status', 'qa_status']
     if not df.empty:
         df['id'] = df['_id'].astype(str)
         for col in expected_cols:
@@ -286,10 +311,16 @@ def clear_db_caches():
     """Invalidate all cached read operations."""
     st.cache_data.clear()
 
-def add_ticket(sprint_id, ticket_id, title, assignee, role, category, sp):
+def add_ticket(sprint_id, ticket_id, title, assignee, role, category, sp,
+               backend_assignee=None, frontend_assignee=None, qa_assignee=None,
+               backend_sp=None, frontend_sp=None, qa_sp=None,
+               backend_start_date=None, backend_end_date=None,
+               frontend_start_date=None, frontend_end_date=None,
+               qa_start_date=None, qa_end_date=None,
+               backend_status=None, frontend_status=None, qa_status=None):
     db = get_mongo_db()
     tid = get_current_team_id()
-    db['backlog'].insert_one({
+    doc = {
         "team_id": str(tid),
         "sprint_id": str(sprint_id),
         "ticket_id": ticket_id,
@@ -297,30 +328,99 @@ def add_ticket(sprint_id, ticket_id, title, assignee, role, category, sp):
         "assignee": assignee,
         "role": role,
         "category": category,
-        "sp": float(sp),
+        "sp": float(sp or 0.0),
         "actual_sp": 0.0,
         "status": "Todo",
         "start_date": None,
         "end_date": None
-    })
+    }
+    # Add role-specific fields if provided
+    if backend_assignee is not None:
+        doc["backend_assignee"] = backend_assignee
+    if frontend_assignee is not None:
+        doc["frontend_assignee"] = frontend_assignee
+    if qa_assignee is not None:
+        doc["qa_assignee"] = qa_assignee
+    if backend_sp is not None:
+        doc["backend_sp"] = float(backend_sp)
+    if frontend_sp is not None:
+        doc["frontend_sp"] = float(frontend_sp)
+    if qa_sp is not None:
+        doc["qa_sp"] = float(qa_sp)
+    if backend_start_date is not None:
+        doc["backend_start_date"] = backend_start_date
+    if backend_end_date is not None:
+        doc["backend_end_date"] = backend_end_date
+    if frontend_start_date is not None:
+        doc["frontend_start_date"] = frontend_start_date
+    if frontend_end_date is not None:
+        doc["frontend_end_date"] = frontend_end_date
+    if qa_start_date is not None:
+        doc["qa_start_date"] = qa_start_date
+    if qa_end_date is not None:
+        doc["qa_end_date"] = qa_end_date
+    if backend_status is not None:
+        doc["backend_status"] = backend_status
+    if frontend_status is not None:
+        doc["frontend_status"] = frontend_status
+    if qa_status is not None:
+        doc["qa_status"] = qa_status
+
+    db['backlog'].insert_one(doc)
     clear_db_caches()
 
-def update_ticket(idx, ticket_id, title, assignee, category, sp, actual_sp, status, start_date, end_date):
+def update_ticket(idx, ticket_id, title, assignee, category, sp, actual_sp, status, start_date, end_date,
+                  backend_assignee=None, frontend_assignee=None, qa_assignee=None,
+                  backend_sp=None, frontend_sp=None, qa_sp=None,
+                  backend_start_date=None, backend_end_date=None,
+                  frontend_start_date=None, frontend_end_date=None,
+                  qa_start_date=None, qa_end_date=None,
+                  backend_status=None, frontend_status=None, qa_status=None):
     db = get_mongo_db()
-    db['backlog'].update_one(
-        {"_id": ObjectId(idx)},
-        {"$set": {
-            "ticket_id": ticket_id,
-            "title": title,
-            "assignee": assignee,
-            "category": category,
-            "sp": float(sp),
-            "actual_sp": float(actual_sp or 0.0),
-            "status": status,
-            "start_date": start_date,
-            "end_date": end_date
-        }}
-    )
+    updates = {
+        "ticket_id": ticket_id,
+        "title": title,
+        "assignee": assignee,
+        "category": category,
+        "sp": float(sp),
+        "actual_sp": float(actual_sp or 0.0),
+        "status": status,
+        "start_date": start_date,
+        "end_date": end_date
+    }
+    # Add role-specific fields if provided
+    if backend_assignee is not None:
+        updates["backend_assignee"] = backend_assignee
+    if frontend_assignee is not None:
+        updates["frontend_assignee"] = frontend_assignee
+    if qa_assignee is not None:
+        updates["qa_assignee"] = qa_assignee
+    if backend_sp is not None:
+        updates["backend_sp"] = float(backend_sp)
+    if frontend_sp is not None:
+        updates["frontend_sp"] = float(frontend_sp)
+    if qa_sp is not None:
+        updates["qa_sp"] = float(qa_sp)
+    if backend_start_date is not None:
+        updates["backend_start_date"] = backend_start_date
+    if backend_end_date is not None:
+        updates["backend_end_date"] = backend_end_date
+    if frontend_start_date is not None:
+        updates["frontend_start_date"] = frontend_start_date
+    if frontend_end_date is not None:
+        updates["frontend_end_date"] = frontend_end_date
+    if qa_start_date is not None:
+        updates["qa_start_date"] = qa_start_date
+    if qa_end_date is not None:
+        updates["qa_end_date"] = qa_end_date
+    if backend_status is not None:
+        updates["backend_status"] = backend_status
+    if frontend_status is not None:
+        updates["frontend_status"] = frontend_status
+    if qa_status is not None:
+        updates["qa_status"] = qa_status
+
+    db['backlog'].update_one({"_id": ObjectId(idx)}, {"$set": updates})
     clear_db_caches()
 
 def delete_ticket(ticket_id):
@@ -632,6 +732,57 @@ def clear_jira_credentials():
     db = get_mongo_db()
     db['jira_config'].delete_one({"_id": "global_jira_config"})
     clear_db_caches()
+
+
+def migrate_credentials_from_secrets():
+    """One-time migration: Load credentials from secrets.toml if DB has test/placeholder values."""
+    import os
+    import streamlit as st
+
+    db = get_mongo_db()
+    doc = db['jira_config'].find_one({"_id": "global_jira_config"})
+
+    if not doc:
+        return False
+
+    # Check if credentials look like test values
+    from utils.encryption import decrypt_value
+    try:
+        token = decrypt_value(doc["encrypted_token"])
+        email = decrypt_value(doc["encrypted_email"])
+
+        print(f"DEBUG: Token starts with 'test_': {token.startswith('test_')}")
+        print(f"DEBUG: Email is test@example.com: {email == 'test@example.com'}")
+
+        # If token starts with "test_" or email is test@example.com, migrate from secrets
+        if token.startswith("test_") or email == "test@example.com":
+            secrets_token = st.secrets.get("JIRA_ACCESS_TOKEN", "")
+            secrets_email = st.secrets.get("JIRA_EMAIL", "")
+            secrets_url = st.secrets.get("JIRA_BASE_URL", "")
+
+            print(f"DEBUG: Secrets token exists: {bool(secrets_token)}")
+            print(f"DEBUG: Secrets email: {secrets_email}")
+
+            if secrets_token and secrets_email:
+                from utils.encryption import encrypt_value
+                db['jira_config'].update_one(
+                    {"_id": "global_jira_config"},
+                    {"$set": {
+                        "encrypted_token": encrypt_value(secrets_token),
+                        "encrypted_email": encrypt_value(secrets_email),
+                        "encrypted_base_url": encrypt_value(secrets_url.rstrip("/")) if secrets_url else None,
+                        "updated_at": __import__('datetime').datetime.utcnow().isoformat()
+                    }}
+                )
+                clear_db_caches()
+                print("DEBUG: Migration successful!")
+                return True
+            else:
+                print("DEBUG: Secrets not found")
+    except Exception as e:
+        print(f"DEBUG: Migration error: {e}")
+
+    return False
 
 def update_sprint_jira_fields(sprint_id, jira_sprint_id=None, last_sync=None, enabled=None):
     """Update JIRA sync metadata on a sprint."""

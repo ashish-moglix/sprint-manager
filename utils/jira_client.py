@@ -6,24 +6,12 @@ DEFAULT_STORY_POINTS_FIELD = "customfield_10119"
 
 
 def _get_auth():
-    """Return (email, access_token) — checks DB first, falls back to secrets."""
-    # Try encrypted DB storage first
-    try:
-        from utils.db import get_jira_credentials
-        creds = get_jira_credentials()
-        if creds and creds.get("token") and creds.get("email"):
-            return creds["email"], creds["token"]
-    except Exception:
-        pass
-
-    # Fallback to secrets.toml / environment
-    token = st.secrets.get("JIRA_ACCESS_TOKEN")
-    if not token:
-        raise RuntimeError("JIRA_ACCESS_TOKEN not configured in DB or secrets")
-    email = st.secrets.get("JIRA_EMAIL") or os.environ.get("JIRA_EMAIL")
-    if not email:
-        raise RuntimeError("JIRA_EMAIL not configured in DB, secrets, or environment")
-    return email, token
+    """Return (email, access_token) — reads from encrypted DB storage."""
+    from utils.db import get_jira_credentials
+    creds = get_jira_credentials()
+    if not creds or not creds.get("token") or not creds.get("email"):
+        raise RuntimeError("JIRA credentials not configured. Please configure in Super Admin > JIRA Configuration.")
+    return creds["email"], creds["token"]
 
 
 def _headers():
@@ -36,20 +24,12 @@ def _auth():
 
 
 def _base_url():
-    # Try encrypted DB storage first
-    try:
-        from utils.db import get_jira_credentials
-        creds = get_jira_credentials()
-        if creds and creds.get("base_url"):
-            return creds["base_url"].rstrip("/")
-    except Exception:
-        pass
-
-    # Fallback to secrets.toml / environment
-    url = st.secrets.get("JIRA_BASE_URL") or os.environ.get("JIRA_BASE_URL")
-    if not url:
-        raise RuntimeError("JIRA_BASE_URL not configured in DB, secrets, or environment")
-    return url.rstrip("/")
+    """Get base URL from encrypted DB storage."""
+    from utils.db import get_jira_credentials
+    creds = get_jira_credentials()
+    if not creds or not creds.get("base_url"):
+        raise RuntimeError("JIRA base URL not configured. Please configure in Super Admin > JIRA Configuration.")
+    return creds["base_url"].rstrip("/")
 
 
 def get_story_points_field():

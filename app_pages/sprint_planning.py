@@ -145,12 +145,28 @@ else:
     if not tasks.empty:
         if not is_selected_active:
             st.subheader(f"Backlog for '{selected_sprint_name}' (Read-Only - {selected_s_row['status']})")
-            tasks_display = tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+            tasks_display = tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date',
+                                   'backend_assignee', 'frontend_assignee', 'qa_assignee',
+                                   'backend_sp', 'frontend_sp', 'qa_sp',
+                                   'backend_start_date', 'backend_end_date',
+                                   'frontend_start_date', 'frontend_end_date',
+                                   'qa_start_date', 'qa_end_date',
+                                   'backend_status', 'frontend_status', 'qa_status']].copy()
+            # Calculate total dev SP and estimated SP
+            tasks_display['backend_sp'] = tasks_display['backend_sp'].fillna(0).astype(float)
+            tasks_display['frontend_sp'] = tasks_display['frontend_sp'].fillna(0).astype(float)
+            tasks_display['qa_sp'] = tasks_display['qa_sp'].fillna(0).astype(float)
+            tasks_display['total_dev_sp'] = tasks_display['backend_sp'] + tasks_display['frontend_sp']
+            tasks_display['est_sp'] = tasks_display['total_dev_sp'] + tasks_display['qa_sp']
+
             if has_jira_col:
                 tasks_display['jira_url'] = tasks['jira_url']
             tasks_display['sprint'] = selected_sprint_name
-            tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date'], format='mixed').dt.date
-            tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date'], format='mixed').dt.date
+            for col in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
+                        'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
+                if col in tasks_display.columns:
+                    tasks_display[col] = pd.to_datetime(tasks_display[col], format='mixed', errors='coerce').dt.date
+            tasks_display['actual_sp'] = tasks_display['actual_sp'].fillna(0).astype(float)
             col_config = {'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True)}
             if has_jira_col:
                 col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
@@ -164,12 +180,15 @@ else:
             # 1. Show My Assigned Tasks (Editable)
             st.subheader("My Assigned Tasks (Active Sprint)")
             if not my_tasks.empty:
-                my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+                my_tasks_display = my_tasks[['ticket_id', 'title', 'status', 'backend_status', 'frontend_status', 'qa_status',
+                                              'sp', 'backend_sp', 'frontend_sp', 'qa_sp', 'actual_sp',
+                                              'start_date', 'end_date',
+                                              'backend_start_date', 'backend_end_date',
+                                              'frontend_start_date', 'frontend_end_date',
+                                              'qa_start_date', 'qa_end_date']].copy()
                 if has_jira_col:
                     my_tasks_display['jira_url'] = my_tasks['jira_url']
                 my_tasks_display['sprint'] = selected_sprint_name
-                my_tasks_display['start_date'] = pd.to_datetime(my_tasks_display['start_date'], format='mixed').dt.date
-                my_tasks_display['end_date'] = pd.to_datetime(my_tasks_display['end_date'], format='mixed').dt.date
                 my_tasks_display['actual_sp'] = my_tasks_display['actual_sp'].fillna(0).astype(float)
                 my_tasks_display = my_tasks_display.set_index('id')
 
@@ -177,13 +196,23 @@ else:
                     'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
                     'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
                     'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
-                    'assignee': st.column_config.TextColumn('Assignee', width='small', disabled=True),
-                    'category': st.column_config.TextColumn('Category', width='small', disabled=True),
-                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
-                    'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
                     'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                    'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                    'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                    'qa_status': st.column_config.SelectboxColumn('QA Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
+                    'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small'),
+                    'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small'),
+                    'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small'),
+                    'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
                     'start_date': st.column_config.DateColumn('Start', width='small'),
                     'end_date': st.column_config.DateColumn('End', width='small'),
+                    'backend_start_date': st.column_config.DateColumn('Backend Start', width='small'),
+                    'backend_end_date': st.column_config.DateColumn('Backend End', width='small'),
+                    'frontend_start_date': st.column_config.DateColumn('Frontend Start', width='small'),
+                    'frontend_end_date': st.column_config.DateColumn('Frontend End', width='small'),
+                    'qa_start_date': st.column_config.DateColumn('QA Start', width='small'),
+                    'qa_end_date': st.column_config.DateColumn('QA End', width='small'),
                 }
                 if has_jira_col:
                     my_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
@@ -220,7 +249,16 @@ else:
                             actual_sp_val = computed_sp if computed_sp is not None else float(orig.get('actual_sp') or 0.0)
                             update_ticket(
                                 idx, orig['ticket_id'], orig['title'], orig['assignee'], orig['category'],
-                                float(row['sp']), actual_sp_val, new_status, start_str, end_str
+                                float(row['sp']), actual_sp_val, new_status, start_str, end_str,
+                                backend_assignee=row.get('backend_assignee'),
+                                frontend_assignee=row.get('frontend_assignee'),
+                                qa_assignee=row.get('qa_assignee'),
+                                backend_sp=float(row.get('backend_sp') or 0),
+                                frontend_sp=float(row.get('frontend_sp') or 0),
+                                qa_sp=float(row.get('qa_sp') or 0),
+                                backend_status=row.get('backend_status'),
+                                frontend_status=row.get('frontend_status'),
+                                qa_status=row.get('qa_status'),
                             )
                     if "my_task_editor" in st.session_state:
                         del st.session_state["my_task_editor"]
@@ -231,12 +269,25 @@ else:
             # 2. Show Other Tasks (Read-Only)
             if not other_tasks.empty:
                 st.subheader("Team's Backlog (Read-Only)")
-                other_display = other_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+                other_display = other_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date',
+                                              'backend_assignee', 'frontend_assignee', 'qa_assignee',
+                                              'backend_sp', 'frontend_sp', 'qa_sp',
+                                              'backend_start_date', 'backend_end_date',
+                                              'frontend_start_date', 'frontend_end_date',
+                                              'qa_start_date', 'qa_end_date',
+                                              'backend_status', 'frontend_status', 'qa_status']].copy()
                 if has_jira_col:
                     other_display['jira_url'] = other_tasks['jira_url']
                 other_display['sprint'] = selected_sprint_name
-                other_display['start_date'] = pd.to_datetime(other_display['start_date'], format='mixed').dt.date
-                other_display['end_date'] = pd.to_datetime(other_display['end_date'], format='mixed').dt.date
+                other_display['backend_sp'] = other_display['backend_sp'].fillna(0).astype(float)
+                other_display['frontend_sp'] = other_display['frontend_sp'].fillna(0).astype(float)
+                other_display['qa_sp'] = other_display['qa_sp'].fillna(0).astype(float)
+                other_display['total_dev_sp'] = other_display['backend_sp'] + other_display['frontend_sp']
+                other_display['est_sp'] = other_display['total_dev_sp'] + other_display['qa_sp']
+                for col in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
+                            'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
+                    if col in other_display.columns:
+                        other_display[col] = pd.to_datetime(other_display[col], format='mixed', errors='coerce').dt.date
                 other_display['actual_sp'] = other_display['actual_sp'].fillna(0).astype(float)
                 other_col_config = {}
                 if has_jira_col:
@@ -259,11 +310,26 @@ else:
 
             filtered_tasks = tasks
             if assignee_filter != "All":
-                filtered_tasks = filtered_tasks[filtered_tasks['assignee'] == assignee_filter]
+                # Filter by any assignee field (main, backend, frontend, qa)
+                mask = (
+                    (filtered_tasks['assignee'] == assignee_filter) |
+                    (filtered_tasks['backend_assignee'] == assignee_filter) |
+                    (filtered_tasks['frontend_assignee'] == assignee_filter) |
+                    (filtered_tasks['qa_assignee'] == assignee_filter)
+                )
+                filtered_tasks = filtered_tasks[mask]
             if title_search.strip():
                 filtered_tasks = filtered_tasks[filtered_tasks['title'].str.contains(title_search.strip(), case=False, na=False)]
 
-            tasks_display = filtered_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date']].copy()
+            # Reorder columns for better visibility
+            tasks_display = filtered_tasks[['ticket_id', 'title', 'assignee', 'category',
+                                             'status', 'backend_status', 'frontend_status', 'qa_status',
+                                             'sp', 'backend_sp', 'frontend_sp', 'qa_sp', 'actual_sp',
+                                             'start_date', 'end_date',
+                                             'backend_start_date', 'backend_end_date',
+                                             'frontend_start_date', 'frontend_end_date',
+                                             'qa_start_date', 'qa_end_date',
+                                             'backend_assignee', 'frontend_assignee', 'qa_assignee']].copy()
             if has_jira_col:
                 tasks_display['jira_url'] = filtered_tasks['jira_url']
                 tasks_display['jira_push_status'] = filtered_tasks.get('jira_push_status', None)
@@ -303,7 +369,16 @@ else:
                     update_ticket(
                         mongo_id, new_row['ticket_id'], new_row['title'], new_row['assignee'],
                         new_row['category'], float(new_row['sp']), actual_sp_val,
-                        new_status, start_str, end_str
+                        new_status, start_str, end_str,
+                        backend_assignee=new_row.get('backend_assignee'),
+                        frontend_assignee=new_row.get('frontend_assignee'),
+                        qa_assignee=new_row.get('qa_assignee'),
+                        backend_sp=float(new_row.get('backend_sp') or 0),
+                        frontend_sp=float(new_row.get('frontend_sp') or 0),
+                        qa_sp=float(new_row.get('qa_sp') or 0),
+                        backend_status=new_row.get('backend_status'),
+                        frontend_status=new_row.get('frontend_status'),
+                        qa_status=new_row.get('qa_status'),
                     )
                 clear_db_caches()
 
@@ -313,11 +388,26 @@ else:
                 'title': st.column_config.TextColumn('Title', width='medium'),
                 'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
                 'category': st.column_config.SelectboxColumn('Category', options=['New Work', 'Spillover', 'Bug Fix', 'Adhoc'], width='small'),
-                'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
-                'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
                 'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                'qa_status': st.column_config.SelectboxColumn('QA Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
+                'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small'),
+                'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small'),
+                'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small'),
+                'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
                 'start_date': st.column_config.DateColumn('Start', width='small'),
                 'end_date': st.column_config.DateColumn('End', width='small'),
+                'backend_start_date': st.column_config.DateColumn('Backend Start', width='small'),
+                'backend_end_date': st.column_config.DateColumn('Backend End', width='small'),
+                'frontend_start_date': st.column_config.DateColumn('Frontend Start', width='small'),
+                'frontend_end_date': st.column_config.DateColumn('Frontend End', width='small'),
+                'qa_start_date': st.column_config.DateColumn('QA Start', width='small'),
+                'qa_end_date': st.column_config.DateColumn('QA End', width='small'),
+                'backend_assignee': st.column_config.SelectboxColumn('Backend Assignee', options=team_df['name'].tolist(), width='small'),
+                'frontend_assignee': st.column_config.SelectboxColumn('Frontend Assignee', options=team_df['name'].tolist(), width='small'),
+                'qa_assignee': st.column_config.SelectboxColumn('QA Assignee', options=team_df['name'].tolist(), width='small'),
                 'Delete': st.column_config.CheckboxColumn('Delete', default=False),
                 '_id': None,
             }
@@ -332,7 +422,7 @@ else:
                 hide_index=True,
                 num_rows="dynamic",
                 use_container_width=True,
-                disabled=['sprint'],
+                disabled=['sprint', 'ticket_id', 'title', 'assignee', 'category', 'actual_sp'],
                 on_change=_auto_save,
             )
 
