@@ -180,7 +180,7 @@ else:
             # 1. Show My Assigned Tasks (Editable)
             st.subheader("My Assigned Tasks (Active Sprint)")
             if not my_tasks.empty:
-                my_tasks_display = my_tasks[['ticket_id', 'title', 'status', 'backend_status', 'frontend_status', 'qa_status',
+                my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'status', 'backend_status', 'frontend_status', 'qa_status',
                                               'sp', 'backend_sp', 'frontend_sp', 'qa_sp', 'actual_sp',
                                               'start_date', 'end_date',
                                               'backend_start_date', 'backend_end_date',
