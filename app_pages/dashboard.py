@@ -27,7 +27,11 @@ else:
     with tab_analytics:
         col_s1, _ = st.columns([2, 2])
         with col_s1:
-            sprint_choice = st.selectbox("View sprint", sprints_df['name'].tolist(), index=0)
+            sprint_names = sprints_df['name'].tolist()
+            active_sprint = sprints_df[sprints_df['status'] == 'Active']
+            active_name = active_sprint.iloc[0]['name'] if not active_sprint.empty else None
+            default_index = sprint_names.index(active_name) if active_name in sprint_names else 0
+            sprint_choice = st.selectbox("View sprint", sprint_names, index=default_index)
 
         s_info = sprints_df[sprints_df['name'] == sprint_choice].iloc[0]
         s_id, s_start, s_end = s_info['id'], s_info['start_date'], s_info['end_date']

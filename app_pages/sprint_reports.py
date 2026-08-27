@@ -17,7 +17,10 @@ else:
     col1, col2 = st.columns([3, 2])
     with col1:
         sprint_names = sprints_df['name'].tolist()
-        selected_sprint = st.selectbox("Select Sprint to View Report", sprint_names)
+        active_sprint = sprints_df[sprints_df['status'] == 'Active']
+        active_name = active_sprint.iloc[0]['name'] if not active_sprint.empty else None
+        default_index = sprint_names.index(active_name) if active_name in sprint_names else 0
+        selected_sprint = st.selectbox("Select Sprint to View Report", sprint_names, index=default_index)
         
     s_row = sprints_df[sprints_df['name'] == selected_sprint].iloc[0]
     s_id = s_row['id']

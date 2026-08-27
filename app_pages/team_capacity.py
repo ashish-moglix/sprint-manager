@@ -22,7 +22,11 @@ team = get_team()
 if sprints_df.empty or team.empty:
     st.info("Create a sprint and add team members first.", icon=":material/info:")
 else:
-    cap_sprint = st.selectbox("Select sprint", sprints_df['name'].tolist(), key="cap_sprint")
+    sprint_names = sprints_df['name'].tolist()
+    active_sprint = sprints_df[sprints_df['status'] == 'Active']
+    active_name = active_sprint.iloc[0]['name'] if not active_sprint.empty else None
+    default_index = sprint_names.index(active_name) if active_name in sprint_names else 0
+    cap_sprint = st.selectbox("Select sprint", sprint_names, index=default_index, key="cap_sprint")
     s_info = sprints_df[sprints_df['name'] == cap_sprint].iloc[0]
     s_id, s_start, s_end = s_info['id'], s_info['start_date'], s_info['end_date']
 
