@@ -68,6 +68,66 @@ def _freeze_columns_js(editor_key: str, freeze_n: int = 3):
 """
 
 
+def _column_filter_ui(editor_key: str, all_columns: list):
+    """Render a column visibility expander and return the list of visible columns.
+    Persists preferences to localStorage via streamlit-js-eval so hidden
+    columns survive page refreshes.
+    """
+    import json as _json
+    from streamlit_js_eval import streamlit_js_eval, set_local_storage
+
+    LS_KEY = f"agile_colvis_{editor_key}"
+    state_key = f"colvis_{editor_key}"
+    loaded_key = f"colvis_loaded_{editor_key}"
+    EXP_KEY = f"colvis_exp_{editor_key}"
+
+    # Differentiate between loading (None) and successful execution (returns JSON string)
+    if not st.session_state.get(loaded_key, False):
+        stored_raw = streamlit_js_eval(
+            js_expressions=f"JSON.stringify({{val: localStorage.getItem('{LS_KEY}')}})",
+            key=f"ls_read_{editor_key}",
+        )
+        if isinstance(stored_raw, str):
+            st.session_state[loaded_key] = True
+            try:
+                data = _json.loads(stored_raw)
+                stored_json = data.get("val")
+                if stored_json and isinstance(stored_json, str):
+                    parsed = _json.loads(stored_json)
+                    if isinstance(parsed, dict):
+                        merged = {col: parsed.get(col, True) for col in all_columns}
+                        st.session_state[state_key] = merged
+            except Exception:
+                pass
+            st.rerun()
+
+    if state_key not in st.session_state:
+        st.session_state[state_key] = {col: True for col in all_columns}
+
+    # Don't render checkboxes until localStorage has been read — avoids showing stale
+    # "all checked" state on page refresh before the restore rerun fires.
+    if not st.session_state.get(loaded_key, False):
+        return list(all_columns)
+
+    with st.expander("Column visibility", expanded=False, key=EXP_KEY):
+        cols = st.columns(6)
+        for i, col in enumerate(all_columns):
+            with cols[i % 6]:
+                label = col.replace('_', ' ').title()
+                st.session_state[state_key][col] = st.checkbox(
+                    label,
+                    value=st.session_state[state_key].get(col, True),
+                    key=f"ck_{editor_key}_{col}",
+                )
+
+    # Persist current state to localStorage
+    current_state = _json.dumps(st.session_state[state_key])
+    state_hash = hash(current_state)
+    set_local_storage(LS_KEY, current_state, component_key=f"ls_write_{editor_key}_{state_hash}")
+
+    return [col for col in all_columns if st.session_state[state_key].get(col, True)]
+
+
 def _calc_actual_sp(start_date_val, end_date_val):
     """Return actual SP = workdays × 2 SP/day. Both start and end are counted, weekends excluded."""
     try:
@@ -231,8 +291,12 @@ else:
             col_config = {'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True)}
             if has_jira_col:
                 col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+            # Column visibility filter for read-only backlog
+            bk_cols = [c for c in tasks_display.columns if c not in ('id', '_id')]
+            visible_bk = _column_filter_ui("backlog_readonly", bk_cols)
+            bk_display = tasks_display[visible_bk]
             st.markdown(_freeze_columns_js("backlog_readonly", freeze_n=4), unsafe_allow_html=True)
-            st.dataframe(tasks_display.set_index('ticket_id'), use_container_width=True, column_config=col_config, key="backlog_readonly")
+            st.dataframe(bk_display.set_index('ticket_id'), use_container_width=True, column_config=col_config, key="backlog_readonly")
 
         elif is_team_user:
             # Active Sprint, Team User role -> Can only edit own tasks
@@ -279,10 +343,13 @@ else:
                 if has_jira_col:
                     my_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
 
+                # Column visibility filter for my tasks editor
+                my_cols = [c for c in my_tasks_display.columns if c not in ('id', '_id')]
+                visible_my = _column_filter_ui("my_task_editor", my_cols)
+                my_display = my_tasks_display[visible_my]
                 st.markdown(_freeze_columns_js("my_task_editor", freeze_n=3), unsafe_allow_html=True)
-
                 edited_my_tasks = st.data_editor(
-                    my_tasks_display,
+                    my_display,
                     column_config=my_col_config,
                     key="my_task_editor",
                     hide_index=True,
@@ -356,8 +423,12 @@ else:
                 other_col_config = {}
                 if has_jira_col:
                     other_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+                # Column visibility filter for team backlog read-only
+                other_cols = [c for c in other_display.columns if c not in ('id', '_id')]
+                visible_other = _column_filter_ui("team_backlog_readonly", other_cols)
+                other_table = other_display[visible_other]
                 st.markdown(_freeze_columns_js("team_backlog_readonly", freeze_n=4), unsafe_allow_html=True)
-                st.dataframe(other_display.set_index('ticket_id'), use_container_width=True, column_config=other_col_config, key="team_backlog_readonly")
+                st.dataframe(other_table.set_index('ticket_id'), use_container_width=True, column_config=other_col_config, key="team_backlog_readonly")
 
         else:
             # Active Sprint, Scrum Master/Admin/PM role -> Full edit privileges!
@@ -484,10 +555,14 @@ else:
                 admin_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
                 admin_col_config['jira_push_status'] = st.column_config.TextColumn('Sync', width='small', disabled=True)
 
+            # Column visibility filter for admin task editor
+            admin_cols = [c for c in tasks_display.columns if c not in ('id', '_id')]
+            visible_admin = _column_filter_ui("task_editor", admin_cols)
+            admin_display = tasks_display[visible_admin]
             st.markdown(_freeze_columns_js("task_editor", freeze_n=4), unsafe_allow_html=True)
 
             st.data_editor(
-                tasks_display,
+                admin_display,
                 column_config=admin_col_config,
                 key="task_editor",
                 hide_index=True,
