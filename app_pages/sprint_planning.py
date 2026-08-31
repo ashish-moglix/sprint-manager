@@ -316,6 +316,10 @@ else:
                     my_tasks_display['jira_url'] = my_tasks['jira_url']
                 my_tasks_display['sprint'] = selected_sprint_name
                 my_tasks_display['actual_sp'] = my_tasks_display['actual_sp'].fillna(0).astype(float)
+                for col in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
+                            'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
+                    if col in my_tasks_display.columns:
+                        my_tasks_display[col] = pd.to_datetime(my_tasks_display[col], format='mixed', errors='coerce').dt.date
                 my_tasks_display = my_tasks_display.set_index('id')
 
                 my_col_config={
@@ -570,7 +574,7 @@ else:
                 use_container_width=True,
                 disabled=['sprint', 'ticket_id', 'title', 'category', 'actual_sp'],
                 on_change=_auto_save,
-                height=len(tasks_display) * 30,
+                # height=len(tasks_display),
             )
 
             edited_state = st.session_state.get("task_editor", {})
