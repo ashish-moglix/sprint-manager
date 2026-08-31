@@ -171,7 +171,7 @@ else:
     jira_cfg = get_current_team_jira_config()
     global_jira = get_jira_credentials()
     jira_base_url = (global_jira and global_jira.get("base_url")) or jira_cfg.get("url", "") if jira_cfg else ""
-    if jira_cfg and jira_cfg.get("board_id"):
+    if jira_cfg and jira_cfg.get("board_id") and not is_team_user:
         with st.container(border=True):
             st.subheader("JIRA Sync")
             c_sync, c_info = st.columns([1, 3])
@@ -300,8 +300,14 @@ else:
 
         elif is_team_user:
             # Active Sprint, Team User role -> Can only edit own tasks
-            my_tasks = tasks[tasks['assignee'] == user_name].copy()
-            other_tasks = tasks[tasks['assignee'] != user_name].copy()
+            my_mask = (
+                (tasks['assignee'] == user_name) |
+                (tasks['backend_assignee'] == user_name) |
+                (tasks['frontend_assignee'] == user_name) |
+                (tasks['qa_assignee'] == user_name)
+            )
+            my_tasks = tasks[my_mask].copy()
+            other_tasks = tasks[~my_mask].copy()
             
             # 1. Show My Assigned Tasks (Editable)
             st.subheader("My Assigned Tasks (Active Sprint)")
