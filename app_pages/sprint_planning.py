@@ -7,7 +7,7 @@ from utils.db import (
     get_current_team_jira_config, add_ticket_comment, get_ticket_comments,
     get_jira_credentials
 )
-from utils.helpers import get_workdays, get_dev_allocated_sp
+from utils.helpers import get_workdays, get_dev_allocated_sp, compute_sp, compute_actual_sp
 
 
 def _freeze_columns_js(editor_key: str, freeze_n: int = 3):
@@ -322,7 +322,8 @@ else:
                 if has_jira_col:
                     my_tasks_display['jira_url'] = my_tasks['jira_url']
                 my_tasks_display['sprint'] = selected_sprint_name
-                my_tasks_display['actual_sp'] = my_tasks_display['actual_sp'].fillna(0).astype(float)
+                my_tasks_display['sp'] = my_tasks_display.apply(compute_sp, axis=1)
+                my_tasks_display['actual_sp'] = my_tasks_display.apply(compute_actual_sp, axis=1)
                 for col in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
                             'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
                     if col in my_tasks_display.columns:
@@ -341,7 +342,7 @@ else:
                     'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
                     'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
                     'qa_status': st.column_config.SelectboxColumn('QA Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
-                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
+                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small', disabled=True),
                     'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small'),
                     'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small'),
                     'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small'),
@@ -391,11 +392,12 @@ else:
                                 start_str = None
                                 end_str = None
 
-                            computed_sp = _calc_actual_sp(start_str, end_str)
-                            actual_sp_val = computed_sp if computed_sp is not None else float(orig.get('actual_sp') or 0.0)
+                            # Use pre-computed values from display
+                            sp_val = float(row['sp'])
+                            actual_sp_val = float(row['actual_sp'])
                             update_ticket(
                                 idx, orig['ticket_id'], orig['title'], row.get('assignee') or orig['assignee'], orig['category'],
-                                float(row['sp']), actual_sp_val, new_status, start_str, end_str,
+                                sp_val, actual_sp_val, new_status, start_str, end_str,
                                 backend_assignee=row.get('backend_assignee'),
                                 frontend_assignee=row.get('frontend_assignee'),
                                 qa_assignee=row.get('qa_assignee'),
@@ -491,7 +493,8 @@ else:
             tasks_display['sprint'] = selected_sprint_name
             tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date'], format='mixed').dt.date
             tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date'], format='mixed').dt.date
-            tasks_display['actual_sp'] = tasks_display['actual_sp'].fillna(0).astype(float)
+            tasks_display['sp'] = tasks_display.apply(compute_sp, axis=1)
+            tasks_display['actual_sp'] = tasks_display.apply(compute_actual_sp, axis=1)
             tasks_display['_id'] = filtered_tasks['id'].values
             tasks_display['Delete'] = False
 
@@ -519,11 +522,12 @@ else:
                         if new_status == 'Todo' and old_status != 'Todo':
                             start_str = None
                             end_str = None
-                    computed_sp = _calc_actual_sp(start_str, end_str)
-                    actual_sp_val = computed_sp if computed_sp is not None else float(new_row.get('actual_sp') or 0.0)
+                    # Use pre-computed values from display
+                    sp_val = float(new_row['sp'])
+                    actual_sp_val = float(new_row['actual_sp'])
                     update_ticket(
                         mongo_id, new_row['ticket_id'], new_row['title'], new_row['assignee'],
-                        new_row['category'], float(new_row['sp']), actual_sp_val,
+                        new_row['category'], sp_val, actual_sp_val,
                         new_status, start_str, end_str,
                         backend_assignee=new_row.get('backend_assignee'),
                         frontend_assignee=new_row.get('frontend_assignee'),
@@ -547,7 +551,7 @@ else:
                 'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
                 'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
                 'qa_status': st.column_config.SelectboxColumn('QA Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
-                'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
+                'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small', disabled=True),
                 'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small'),
                 'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small'),
                 'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small'),

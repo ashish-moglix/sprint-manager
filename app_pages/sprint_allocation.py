@@ -5,7 +5,7 @@ from utils.db import (
     get_sprints, get_team, get_leaves, get_holidays, get_backlog,
     update_ticket, clear_db_caches,
 )
-from utils.helpers import get_workdays, get_dev_allocated_sp
+from utils.helpers import get_workdays, get_dev_allocated_sp, compute_sp, compute_actual_sp
 
 st.title("Sprint allocation board")
 
