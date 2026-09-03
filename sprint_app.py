@@ -244,6 +244,7 @@ else:
         pg = st.navigation([
             st.Page("app_pages/dashboard.py", title="Dashboard", icon=":material/dashboard:"),
             st.Page("app_pages/sprint_planning.py", title="Sprint Planning", icon=":material/assignment:"),
+            st.Page("app_pages/sprint_allocation.py", title="Sprint Allocation Board", icon=":material/view_kanban:"),
             st.Page("app_pages/team_capacity.py", title="Team Capacity", icon=":material/groups:"),
             st.Page("app_pages/presence_holidays.py", title="Presence & Holidays", icon=":material/calendar_today:"),
             st.Page("app_pages/team_system_setup.py", title="Team & System Setup", icon=":material/settings:"),

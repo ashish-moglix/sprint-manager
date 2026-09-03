@@ -312,7 +312,8 @@ else:
             # 1. Show My Assigned Tasks (Editable)
             st.subheader("My Assigned Tasks (Active Sprint)")
             if not my_tasks.empty:
-                my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'status', 'backend_status', 'frontend_status', 'qa_status',
+                my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'assignee', 'backend_assignee', 'frontend_assignee', 'qa_assignee',
+                                              'status', 'backend_status', 'frontend_status', 'qa_status',
                                               'sp', 'backend_sp', 'frontend_sp', 'qa_sp', 'actual_sp',
                                               'start_date', 'end_date',
                                               'backend_start_date', 'backend_end_date',
@@ -332,10 +333,14 @@ else:
                     'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
                     'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
                     'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
+                    'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
+                    'backend_assignee': st.column_config.SelectboxColumn('Backend', options=['NA'] + team_df['name'].tolist(), width='small'),
+                    'frontend_assignee': st.column_config.SelectboxColumn('Frontend', options=['NA'] + team_df['name'].tolist(), width='small'),
+                    'qa_assignee': st.column_config.SelectboxColumn('QA', options=['NA'] + team_df['name'].tolist(), width='small'),
                     'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                    'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                    'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                    'qa_status': st.column_config.SelectboxColumn('QA Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                    'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
+                    'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
+                    'qa_status': st.column_config.SelectboxColumn('QA Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
                     'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
                     'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small'),
                     'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small'),
@@ -389,7 +394,7 @@ else:
                             computed_sp = _calc_actual_sp(start_str, end_str)
                             actual_sp_val = computed_sp if computed_sp is not None else float(orig.get('actual_sp') or 0.0)
                             update_ticket(
-                                idx, orig['ticket_id'], orig['title'], orig['assignee'], orig['category'],
+                                idx, orig['ticket_id'], orig['title'], row.get('assignee') or orig['assignee'], orig['category'],
                                 float(row['sp']), actual_sp_val, new_status, start_str, end_str,
                                 backend_assignee=row.get('backend_assignee'),
                                 frontend_assignee=row.get('frontend_assignee'),
@@ -539,9 +544,9 @@ else:
                 'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
                 'category': st.column_config.SelectboxColumn('Category', options=['New Work', 'Spillover', 'Bug Fix', 'Adhoc'], width='small'),
                 'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                'qa_status': st.column_config.SelectboxColumn('QA Status', options=['Todo', 'In Progress', 'Done'], width='small'),
+                'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
+                'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
+                'qa_status': st.column_config.SelectboxColumn('QA Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
                 'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small'),
                 'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small'),
                 'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small'),
@@ -555,9 +560,9 @@ else:
                 'frontend_end_date': st.column_config.DateColumn('Frontend End', width='small'),
                 'qa_start_date': st.column_config.DateColumn('QA Start', width='small'),
                 'qa_end_date': st.column_config.DateColumn('QA End', width='small'),
-                'backend_assignee': st.column_config.SelectboxColumn('Backend Assignee', options=team_df['name'].tolist(), width='small'),
-                'frontend_assignee': st.column_config.SelectboxColumn('Frontend Assignee', options=team_df['name'].tolist(), width='small'),
-                'qa_assignee': st.column_config.SelectboxColumn('QA Assignee', options=team_df['name'].tolist(), width='small'),
+                'backend_assignee': st.column_config.SelectboxColumn('Backend Assignee', options=['NA'] + team_df['name'].tolist(), width='small'),
+                'frontend_assignee': st.column_config.SelectboxColumn('Frontend Assignee', options=['NA'] + team_df['name'].tolist(), width='small'),
+                'qa_assignee': st.column_config.SelectboxColumn('QA Assignee', options=['NA'] + team_df['name'].tolist(), width='small'),
                 'Delete': st.column_config.CheckboxColumn('Delete', default=False),
                 '_id': None,
             }
