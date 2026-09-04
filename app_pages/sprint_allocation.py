@@ -93,11 +93,12 @@ def _get_dev_tasks(dev_name):
 def _get_unassigned_tasks():
     if tasks.empty:
         return pd.DataFrame()
+    empty = ("", "NA")
     mask = (
-        (tasks["assignee"].isna() | (tasks["assignee"] == "")) &
-        (tasks["backend_assignee"].isna() | (tasks["backend_assignee"] == "")) &
-        (tasks["frontend_assignee"].isna() | (tasks["frontend_assignee"] == "")) &
-        (tasks["qa_assignee"].isna() | (tasks["qa_assignee"] == ""))
+        (tasks["assignee"].isna() | tasks["assignee"].isin(empty)) &
+        (tasks["backend_assignee"].isna() | tasks["backend_assignee"].isin(empty)) &
+        (tasks["frontend_assignee"].isna() | tasks["frontend_assignee"].isin(empty)) &
+        (tasks["qa_assignee"].isna() | tasks["qa_assignee"].isin(empty))
     )
     return tasks[mask].copy()
 
@@ -179,6 +180,10 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
         if "date" in col:
             view_df[col] = pd.to_datetime(view_df[col], format="mixed", errors="coerce").dt.date
 
+    # Compute SP and Actual SP
+    view_df['sp'] = view_df.apply(compute_sp, axis=1)
+    view_df['actual_sp'] = view_df.apply(compute_actual_sp, axis=1)
+
     # Configure columns
     team_names = team_df["name"].tolist()
     col_config = {
@@ -187,17 +192,17 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
         "title": st.column_config.TextColumn("Title", width="medium", disabled=True),
         "category": st.column_config.SelectboxColumn("Category", options=["New Work", "Spillover", "Bug Fix", "Adhoc"], width="small"),
         "assignee": st.column_config.SelectboxColumn("Assignee", options=[""] + team_names, width="small"),
-        "backend_assignee": st.column_config.SelectboxColumn("Backend", options=[""] + team_names, width="small"),
-        "frontend_assignee": st.column_config.SelectboxColumn("Frontend", options=[""] + team_names, width="small"),
-        "qa_assignee": st.column_config.SelectboxColumn("QA", options=[""] + team_names, width="small"),
+        "backend_assignee": st.column_config.SelectboxColumn("Backend", options=["NA"] + team_names, width="small"),
+        "frontend_assignee": st.column_config.SelectboxColumn("Frontend", options=["NA"] + team_names, width="small"),
+        "qa_assignee": st.column_config.SelectboxColumn("QA", options=["NA"] + team_names, width="small"),
         "status": st.column_config.SelectboxColumn("Status", options=["Todo", "In Progress", "Done"], width="small"),
-        "backend_status": st.column_config.SelectboxColumn("BE Status", options=["Todo", "In Progress", "Done"], width="small"),
-        "frontend_status": st.column_config.SelectboxColumn("FE Status", options=["Todo", "In Progress", "Done"], width="small"),
-        "qa_status": st.column_config.SelectboxColumn("QA Status", options=["Todo", "In Progress", "Done"], width="small"),
-        "sp": st.column_config.NumberColumn("SP", min_value=0.0, step=0.5, width="small"),
-        "backend_sp": st.column_config.NumberColumn("BE SP", min_value=0.0, step=0.5, width="small"),
-        "frontend_sp": st.column_config.NumberColumn("FE SP", min_value=0.0, step=0.5, width="small"),
-        "qa_sp": st.column_config.NumberColumn("QA SP", min_value=0.0, step=0.5, width="small"),
+        "backend_status": st.column_config.SelectboxColumn("BE Status", options=["NA", "Todo", "In Progress", "Done"], width="small"),
+        "frontend_status": st.column_config.SelectboxColumn("FE Status", options=["NA", "Todo", "In Progress", "Done"], width="small"),
+        "qa_status": st.column_config.SelectboxColumn("QA Status", options=["NA", "Todo", "In Progress", "Done"], width="small"),
+        "sp": st.column_config.NumberColumn("SP", min_value=0.0, step=0.5, width="small", disabled=True),
+        "backend_sp": st.column_config.NumberColumn("BE SP", min_value=0.0, step=0.5, width="small", disabled=True),
+        "frontend_sp": st.column_config.NumberColumn("FE SP", min_value=0.0, step=0.5, width="small", disabled=True),
+        "qa_sp": st.column_config.NumberColumn("QA SP", min_value=0.0, step=0.5, width="small", disabled=True),
         "start_date": st.column_config.DateColumn("Start", width="small"),
         "end_date": st.column_config.DateColumn("End", width="small"),
         "backend_start_date": st.column_config.DateColumn("BE Start", width="small"),
