@@ -622,7 +622,62 @@ else:
             #     ... (push buttons and comments expander hidden for now)
 
         st.divider()
-        st.subheader("Sprint velocity summary")
+        st.subheader("Sprint capacity summary")
+
+        # Load sprint dates and leaves once
+        s_start_dt = pd.to_datetime(selected_s_row['start_date'], format='mixed').date()
+        s_end_dt = pd.to_datetime(selected_s_row['end_date'], format='mixed').date()
+        leaves_all = get_leaves(selected_s_id)
+        hols_all = get_holidays(selected_s_id, s_start_dt, s_end_dt)
+        holiday_count = len(hols_all)
+        workdays_total = get_workdays(s_start_dt, s_end_dt)
+
+        # Helper to compute capacity for a role group
+        def compute_role_capacity(role_filter):
+            team_subset = team_df[team_df['role'].apply(role_filter)]
+            capacity = available = allocated = 0.0
+            for _, dev in team_subset.iterrows():
+                dev_leaves = leaves_all[leaves_all['name'] == dev['name']]['total_days'].sum()
+                eff_days = max(workdays_total - holiday_count - dev_leaves, 0)
+                dev_cap = eff_days * dev['daily_sp']
+                dev_buf = dev_cap * (dev.get('bug_p', 15) + dev.get('adhoc_p', 10) + dev.get('ceremony_p', 10)) / 100
+                dev_avail = dev_cap - dev_buf
+                dev_alloc = get_dev_allocated_sp(dev['name'], tasks)
+                capacity += dev_cap
+                available += dev_avail
+                allocated += dev_alloc
+            remaining = available - allocated
+            return capacity, available, allocated, remaining
+
+        # Separate metrics by role
+        tab_be, tab_fe, tab_qa = st.tabs(["Backend", "Frontend", "QA"])
+
+        with tab_be:
+            be_cap, be_avail, be_alloc, be_rem = compute_role_capacity(lambda r: r in ('Backend', 'Fullstack'))
+            c1, c2, c3, c4 = st.columns(4, border=True)
+            c1.metric("Capacity", f"{be_cap:.1f}")
+            c2.metric("Available", f"{be_avail:.1f}")
+            c3.metric("Allocated", f"{be_alloc:.1f}")
+            c4.metric("Remaining", f"{be_rem:.1f}", delta=f"{be_rem:+.1f}")
+
+        with tab_fe:
+            fe_cap, fe_avail, fe_alloc, fe_rem = compute_role_capacity(lambda r: r in ('Frontend', 'Fullstack'))
+            c1, c2, c3, c4 = st.columns(4, border=True)
+            c1.metric("Capacity", f"{fe_cap:.1f}")
+            c2.metric("Available", f"{fe_avail:.1f}")
+            c3.metric("Allocated", f"{fe_alloc:.1f}")
+            c4.metric("Remaining", f"{fe_rem:.1f}", delta=f"{fe_rem:+.1f}")
+
+        with tab_qa:
+            qa_cap, qa_avail, qa_alloc, qa_rem = compute_role_capacity(lambda r: r == 'QA')
+            c1, c2, c3, c4 = st.columns(4, border=True)
+            c1.metric("Capacity", f"{qa_cap:.1f}")
+            c2.metric("Available", f"{qa_avail:.1f}")
+            c3.metric("Allocated", f"{qa_alloc:.1f}")
+            c4.metric("Remaining", f"{qa_rem:.1f}", delta=f"{qa_rem:+.1f}")
+
+        st.divider()
+        st.subheader("Sprint progress")
         total_est = tasks['sp'].sum()
         total_act = tasks['actual_sp'].fillna(0).sum()
         variance = total_act - total_est

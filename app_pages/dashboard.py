@@ -84,11 +84,18 @@ else:
         final_plannable = cap_df['Plannable SP'].sum()
 
         tasks = get_backlog(s_id)
-        planned = tasks['sp'].sum() if not tasks.empty else 0
+
+        # Compute SP from role-specific columns
+        if not tasks.empty:
+            tasks['computed_sp'] = tasks['backend_sp'].fillna(0) + tasks['frontend_sp'].fillna(0) + tasks['qa_sp'].fillna(0)
+        else:
+            tasks['computed_sp'] = 0.0
+
+        planned = tasks['computed_sp'].sum() if not tasks.empty else 0
 
         done_tasks = tasks[tasks['status'] == 'Done'] if 'status' in tasks.columns and not tasks.empty else pd.DataFrame()
         inprog_tasks = tasks[tasks['status'] == 'In Progress'] if 'status' in tasks.columns and not tasks.empty else pd.DataFrame()
-        velocity_sp = done_tasks['sp'].sum() if not done_tasks.empty else 0
+        velocity_sp = done_tasks['computed_sp'].sum() if not done_tasks.empty else 0
         remaining_sp = planned - velocity_sp
 
         # --- METRICS OVERVIEW ---
@@ -136,8 +143,10 @@ else:
             
             # Velocity trend
             sp_t = get_backlog(spr_id)
+            if not sp_t.empty:
+                sp_t['computed_sp'] = sp_t['backend_sp'].fillna(0) + sp_t['frontend_sp'].fillna(0) + sp_t['qa_sp'].fillna(0)
             sp_d = sp_t[sp_t['status'] == 'Done'] if 'status' in sp_t.columns and not sp_t.empty else pd.DataFrame()
-            velocity_trend.append(sp_d['sp'].sum() if not sp_d.empty else 0)
+            velocity_trend.append(sp_d['computed_sp'].sum() if not sp_d.empty else 0)
             
             # Buffers trend
             buffers_trend.append(buf_sp_spr)
@@ -158,25 +167,56 @@ else:
             with r2:
                 st.progress(int(min(pct_done, 100)), text=f"{velocity_sp:.0f} / {planned:.0f} SP completed ({pct_done:.0f}%)")
 
-        # --- SPARKLINE KPI CARDS ---
-        m_cols = st.columns(4, border=True)
-        m_cols[0].metric(
-            "Team capacity", f"{total_net_sp:.0f}",
-            help="Gross capacity (all members, full sprint)",
-            chart_data=capacity_trend, chart_type="line"
-        )
-        m_cols[1].metric(
-            "Plannable SP", f"{final_plannable:.1f}",
-            help="After buffer deductions"
-        )
-        m_cols[2].metric(
-            "Allocated SP", f"{planned:.1f}",
-            delta=f"{final_plannable - planned:.1f}"
-        )
-        m_cols[3].metric(
-            "Utilization", f"{pct_used:.0f}%",
-            help="Allocated / Plannable"
-        )
+        # --- CAPACITY METRICS BY ROLE ---
+        tab_dev, tab_qa = st.tabs(["Development (Backend + Frontend)", "QA"])
+
+        with tab_dev:
+            dev_team = cap_df[cap_df['Role'].isin(['Backend', 'Frontend', 'Fullstack'])]
+            dev_total = dev_team['Net SP'].sum()
+            dev_plannable = dev_team['Plannable SP'].sum()
+
+            # Allocated = sum of backend_sp + frontend_sp across all tasks
+            dev_allocated = 0.0
+            if not tasks.empty:
+                dev_allocated = tasks['backend_sp'].fillna(0).sum() + tasks['frontend_sp'].fillna(0).sum()
+
+            # Completed = sum of backend_sp + frontend_sp for Done tasks
+            dev_completed = 0.0
+            if not done_tasks.empty:
+                dev_completed = done_tasks['backend_sp'].fillna(0).sum() + done_tasks['frontend_sp'].fillna(0).sum()
+
+            dev_remaining = dev_plannable - dev_allocated
+            dev_util = (dev_allocated / dev_plannable * 100) if dev_plannable > 0 else 0
+
+            m_cols_dev = st.columns(4, border=True)
+            m_cols_dev[0].metric("Dev capacity", f"{dev_total:.0f}", help="Backend + Frontend + Fullstack gross capacity")
+            m_cols_dev[1].metric("Plannable SP", f"{dev_plannable:.1f}", help="After buffer deductions")
+            m_cols_dev[2].metric("Allocated SP", f"{dev_allocated:.1f}", delta=f"{dev_remaining:.1f}")
+            m_cols_dev[3].metric("Utilization", f"{dev_util:.0f}%", help="Allocated / Plannable")
+
+        with tab_qa:
+            qa_team = cap_df[cap_df['Role'] == 'QA']
+            qa_total = qa_team['Net SP'].sum()
+            qa_plannable = qa_team['Plannable SP'].sum()
+
+            # Allocated = sum of qa_sp across all tasks
+            qa_allocated = 0.0
+            if not tasks.empty:
+                qa_allocated = tasks['qa_sp'].fillna(0).sum()
+
+            # Completed = sum of qa_sp for Done tasks
+            qa_completed = 0.0
+            if not done_tasks.empty:
+                qa_completed = done_tasks['qa_sp'].fillna(0).sum()
+
+            qa_remaining = qa_plannable - qa_allocated
+            qa_util = (qa_allocated / qa_plannable * 100) if qa_plannable > 0 else 0
+
+            m_cols_qa = st.columns(4, border=True)
+            m_cols_qa[0].metric("QA capacity", f"{qa_total:.0f}", help="QA gross capacity")
+            m_cols_qa[1].metric("Plannable SP", f"{qa_plannable:.1f}", help="After buffer deductions")
+            m_cols_qa[2].metric("Allocated SP", f"{qa_allocated:.1f}", delta=f"{qa_remaining:.1f}")
+            m_cols_qa[3].metric("Utilization", f"{qa_util:.0f}%", help="Allocated / Plannable")
 
         # --- BURNDOWN CALCULATIONS ---
         burn_df = pd.DataFrame()
@@ -196,12 +236,12 @@ else:
                 end_dt = min(s_end_dt, today_dt)
                 sprint_days = pd.bdate_range(s_start_dt, end_dt)
                 total_days = len(pd.bdate_range(s_start_dt, s_end_dt)) or 1
-                total_sp = tasks['sp'].sum()
+                total_sp = tasks['computed_sp'].sum()
 
                 burn_rows = []
                 for d in sprint_days:
                     d_done = done_tasks[pd.to_datetime(done_tasks['end_date'], errors='coerce').dt.normalize() <= pd.Timestamp(d.date())] if not done_tasks.empty else pd.DataFrame()
-                    completed_by = d_done['sp'].sum() if not d_done.empty else 0
+                    completed_by = d_done['computed_sp'].sum() if not d_done.empty else 0
                     actual = total_sp - completed_by
                     idx = (d - s_start_dt).days
                     ideal = total_sp * (1 - idx / total_days)
@@ -544,8 +584,14 @@ else:
             for _, spr in last_5.iterrows():
                 spr_id = spr['id']
                 spr_tasks = get_backlog(spr_id)
-                planned_sp = spr_tasks['sp'].sum() if not spr_tasks.empty else 0.0
-                completed_sp = spr_tasks[spr_tasks['status'] == 'Done']['sp'].sum() if not spr_tasks.empty else 0.0
+                if not spr_tasks.empty:
+                    spr_tasks['computed_sp'] = spr_tasks['backend_sp'].fillna(0) + spr_tasks['frontend_sp'].fillna(0) + spr_tasks['qa_sp'].fillna(0)
+                    planned_sp = spr_tasks['computed_sp'].sum()
+                    done_spr = spr_tasks[spr_tasks['status'] == 'Done']
+                    completed_sp = done_spr['computed_sp'].sum() if not done_spr.empty else 0.0
+                else:
+                    planned_sp = 0.0
+                    completed_sp = 0.0
                 perf_data.append({
                     "Sprint": spr['name'],
                     "Planned SP": planned_sp,
@@ -573,7 +619,10 @@ else:
                 spr_tasks = get_backlog(spr_id)
                 if spr_tasks.empty:
                     continue
-                
+
+                # Compute SP from role-specific columns
+                spr_tasks['computed_sp'] = spr_tasks['backend_sp'].fillna(0) + spr_tasks['frontend_sp'].fillna(0) + spr_tasks['qa_sp'].fillna(0)
+
                 s_start_raw = spr.get('actual_start_date') or spr.get('start_date')
                 s_end_raw = spr.get('actual_end_date') or spr.get('end_date')
                 if not s_start_raw or not s_end_raw:
@@ -585,11 +634,11 @@ else:
                 work_days_list = pd.bdate_range(s_start, s_end)
                 if len(work_days_list) <= 1:
                     continue
-                    
-                total_sp = spr_tasks['sp'].sum()
+
+                total_sp = spr_tasks['computed_sp'].sum()
                 if total_sp == 0:
                     continue
-                    
+
                 done_tasks = spr_tasks[spr_tasks['status'] == 'Done'] if 'status' in spr_tasks.columns else pd.DataFrame()
                 
                 # Day 0
@@ -602,7 +651,7 @@ else:
                 total_days = len(work_days_list) - 1
                 for idx, day in enumerate(work_days_list[1:], start=1):
                     if not done_tasks.empty:
-                        completed_by = done_tasks[pd.to_datetime(done_tasks['end_date'], errors='coerce').dt.normalize() <= pd.Timestamp(day.date())]['sp'].sum()
+                        completed_by = done_tasks[pd.to_datetime(done_tasks['end_date'], errors='coerce').dt.normalize() <= pd.Timestamp(day.date())]['computed_sp'].sum()
                     else:
                         completed_by = 0
                         
@@ -635,9 +684,15 @@ else:
                 spr_id = spr['id']
                 spr_name = spr['name']
                 spr_tasks = get_backlog(spr_id)
-                planned_sp = spr_tasks['sp'].sum() if not spr_tasks.empty else 0.0
-                completed_sp = spr_tasks[spr_tasks['status'] == 'Done']['sp'].sum() if not spr_tasks.empty else 0.0
-                
+                if not spr_tasks.empty:
+                    spr_tasks['computed_sp'] = spr_tasks['backend_sp'].fillna(0) + spr_tasks['frontend_sp'].fillna(0) + spr_tasks['qa_sp'].fillna(0)
+                    planned_sp = spr_tasks['computed_sp'].sum()
+                    done_spr = spr_tasks[spr_tasks['status'] == 'Done']
+                    completed_sp = done_spr['computed_sp'].sum() if not done_spr.empty else 0.0
+                else:
+                    planned_sp = 0.0
+                    completed_sp = 0.0
+
                 completion_rate = (completed_sp / planned_sp * 100) if planned_sp > 0 else 0.0
                 
                 p_start = pd.to_datetime(spr['start_date'])
