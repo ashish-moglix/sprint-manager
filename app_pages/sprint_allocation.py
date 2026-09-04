@@ -64,9 +64,9 @@ def _dev_capacity(dev_row):
     dev_role = dev_row.get("role", "")
     daily_sp = 0.0 if dev_role in ("PM", "EM") else dev_row["daily_sp"]
     total_sp = eff * daily_sp
-    bug_buf = total_sp * dev_row.get("bug_p", 15.0) / 100
-    adhoc_buf = total_sp * dev_row.get("adhoc_p", 10.0) / 100
-    cere_buf = total_sp * dev_row.get("ceremony_p", 10.0) / 100
+    bug_buf = dev_row.get("bug_p", 0.0)
+    adhoc_buf = dev_row.get("adhoc_p", 0.0)
+    cere_buf = dev_row.get("ceremony_p", 0.0)
     buffers = bug_buf + adhoc_buf + cere_buf
     avail = total_sp - buffers
     alloc = get_dev_allocated_sp(dev_row["name"], tasks)

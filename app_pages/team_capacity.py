@@ -46,14 +46,14 @@ else:
         daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev['daily_sp']
         total_sp = eff * daily_sp
         
-        # Buffer calculation from individual developer parameters
-        dev_bug_p = dev.get('bug_p', 15.0)
-        dev_adhoc_p = dev.get('adhoc_p', 10.0)
-        dev_cere_p = dev.get('ceremony_p', 10.0)
-        
-        bug_buf = total_sp * dev_bug_p / 100
-        adhoc_buf = total_sp * dev_adhoc_p / 100
-        cere_buf = total_sp * dev_cere_p / 100
+        # Buffer calculation from individual developer parameters (as story points)
+        dev_bug_p = dev.get('bug_p', 0.0)
+        dev_adhoc_p = dev.get('adhoc_p', 0.0)
+        dev_cere_p = dev.get('ceremony_p', 0.0)
+
+        bug_buf = dev_bug_p
+        adhoc_buf = dev_adhoc_p
+        cere_buf = dev_cere_p
         avail = total_sp - bug_buf - adhoc_buf - cere_buf
         alloc = get_dev_allocated_sp(dev['name'], tasks)
         rem = avail - alloc
@@ -65,9 +65,9 @@ else:
             "Leaves": leave_days,
             "Effective Days": eff,
             "Total SP": round(total_sp, 1),
-            "Bug Buffer": round(bug_buf, 1),
-            "Adhoc Buffer": round(adhoc_buf, 1),
-            "Ceremony Buffer": round(cere_buf, 1),
+            "Bug SP": round(bug_buf, 1),
+            "Adhoc SP": round(adhoc_buf, 1),
+            "Ceremony SP": round(cere_buf, 1),
             "Available SP": round(avail, 1),
             "Allocated SP": round(alloc, 1),
             "Remaining SP": round(rem, 1),
@@ -99,9 +99,9 @@ else:
             "Leaves": st.column_config.NumberColumn("Leaves", disabled=True),
             "Effective Days": st.column_config.NumberColumn("Effective days", disabled=True),
             "Total SP": st.column_config.NumberColumn("Total SP", disabled=True),
-            "Bug Buffer": st.column_config.NumberColumn("Bug buffer", disabled=True),
-            "Adhoc Buffer": st.column_config.NumberColumn("Adhoc buffer", disabled=True),
-            "Ceremony Buffer": st.column_config.NumberColumn("Ceremony buffer", disabled=True),
+            "Bug SP": st.column_config.NumberColumn("Bug SP", disabled=True),
+            "Adhoc SP": st.column_config.NumberColumn("Adhoc SP", disabled=True),
+            "Ceremony SP": st.column_config.NumberColumn("Ceremony SP", disabled=True),
             "Available SP": st.column_config.NumberColumn("Available SP", disabled=True),
             "Allocated SP": st.column_config.NumberColumn("Allocated SP", disabled=True),
             "Remaining SP": st.column_config.NumberColumn("Remaining SP", disabled=True),
@@ -116,14 +116,14 @@ else:
     st.subheader("Capacity vs allocation per person")
     melt = cap_table.melt(
         id_vars=['Name'],
-        value_vars=['Allocated SP', 'Remaining SP', 'Bug Buffer', 'Adhoc Buffer', 'Ceremony Buffer'],
+        value_vars=['Allocated SP', 'Remaining SP', 'Bug SP', 'Adhoc SP', 'Ceremony SP'],
         var_name='Component', value_name='SP',
     )
     chart_cap = alt.Chart(melt).mark_bar(size=24, cornerRadius=4).encode(
         x=alt.X("Name:N", title="Team member", axis=alt.Axis(labelAngle=0)),
         y=alt.Y("SP:Q", title="Story Points", stack="zero"),
         color=alt.Color("Component:N", scale=alt.Scale(
-            domain=['Allocated SP', 'Remaining SP', 'Bug Buffer', 'Adhoc Buffer', 'Ceremony Buffer'],
+            domain=['Allocated SP', 'Remaining SP', 'Bug SP', 'Adhoc SP', 'Ceremony SP'],
             range=[color_green, color_blue, color_red, color_orange, color_primary]
         ), legend=alt.Legend(title="Capacity Allocation Components", orient="bottom")),
         tooltip=['Name:N', 'Component:N', 'SP:Q']

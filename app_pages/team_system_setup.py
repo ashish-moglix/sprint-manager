@@ -27,10 +27,10 @@ with t_abs[0]:
                 rl = st.selectbox("Role", ["Backend", "Frontend", "QA", "PM", "EM"], key="member_role_select")
                 pass_input = st.text_input("Password (optional, defaults to Welcome@123)", type="password", key="member_password_input")
             
-            # Buffer input sliders
-            b_p = st.slider("Prod bug buffer (%)", 0, 30, 15, key="member_bug_slider")
-            a_p = st.slider("Adhoc buffer (%)", 0, 20, 10, key="member_adhoc_slider")
-            c_p = st.slider("Ceremonies buffer (%)", 0, 25, 10, key="member_cere_slider")
+            # Buffer input sliders (in story points)
+            b_p = st.slider("Prod bug buffer (SP)", 0, 30, 2, key="member_bug_slider")
+            a_p = st.slider("Adhoc buffer (SP)", 0, 20, 2, key="member_adhoc_slider")
+            c_p = st.slider("Ceremonies buffer (SP)", 0, 25, 2, key="member_cere_slider")
             
             if st.form_submit_button("Add member", type="primary"):
                 if nm.strip():
@@ -110,9 +110,9 @@ with t_abs[0]:
                     "user_role": st.column_config.SelectboxColumn("User role", options=["Team Admin", "Team User"]),
                     "role": st.column_config.SelectboxColumn("Developer role", options=["Backend", "Frontend", "QA", "PM", "EM"]),
                     "daily_sp": st.column_config.NumberColumn("Daily SP", min_value=0.0, step=0.5),
-                    "bug_p": st.column_config.NumberColumn("Bug buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
-                    "adhoc_p": st.column_config.NumberColumn("Adhoc buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
-                    "ceremony_p": st.column_config.NumberColumn("Ceremony buffer (%)", min_value=0.0, max_value=100.0, step=1.0),
+                    "bug_p": st.column_config.NumberColumn("Bug buffer (SP)", min_value=0.0, max_value=100.0, step=1.0),
+                    "adhoc_p": st.column_config.NumberColumn("Adhoc buffer (SP)", min_value=0.0, max_value=100.0, step=1.0),
+                    "ceremony_p": st.column_config.NumberColumn("Ceremony buffer (SP)", min_value=0.0, max_value=100.0, step=1.0),
                     "Delete": st.column_config.CheckboxColumn("Delete", default=False),
                 },
                 key="team_editor",

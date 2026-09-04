@@ -113,14 +113,15 @@ def generate_sprint_report_data(sprint_id):
         dev_role = dev.get('role', '')
         daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev.get('daily_sp', 0.0)
         net_capacity = max(work_days - l_days - holiday_count, 0) * daily_sp
+        dev_eff_days = max(work_days - l_days - holiday_count, 0)
         
-        b_p = dev.get('bug_p', 15.0)
-        a_p = dev.get('adhoc_p', 10.0)
-        c_p = dev.get('ceremony_p', 10.0)
+        b_p = dev.get('bug_p', 0.0)
+        a_p = dev.get('adhoc_p', 0.0)
+        c_p = dev.get('ceremony_p', 0.0)
 
-        dev_bug = net_capacity * (b_p / 100.0)
-        dev_adhoc = net_capacity * (a_p / 100.0)
-        dev_cere = net_capacity * (c_p / 100.0)
+        dev_bug = b_p
+        dev_adhoc = a_p
+        dev_cere = c_p
         dev_plan = net_capacity - (dev_bug + dev_adhoc + dev_cere)
 
         # Developer backlog
@@ -131,13 +132,20 @@ def generate_sprint_report_data(sprint_id):
             allocated = dev_tasks['sp'].sum() if not dev_tasks.empty else 0.0
             completed = dev_tasks[dev_tasks['status'] == 'Done']['sp'].sum() if not dev_tasks.empty else 0.0
 
+        remaining = max(net_capacity - allocated, 0.0)
+
         dev_details.append({
             "name": dev_name,
             "role": dev.get('role', 'Developer'),
             "capacity": net_capacity,
             "allocated": allocated,
             "completed": completed,
-            "delivery_rate": (completed / allocated * 100.0) if allocated > 0.0 else 0.0
+            "remaining": remaining,
+            "eff_days": dev_eff_days,
+            "leaves": l_days,
+            "daily_sp": daily_sp,
+            "delivery_rate": (completed / allocated * 100.0) if allocated > 0.0 else 0.0,
+            "utilization_rate": (allocated / net_capacity * 100.0) if net_capacity > 0 else 0.0,
         })
 
         total_net_sp += net_capacity
@@ -191,6 +199,10 @@ def generate_sprint_report_data(sprint_id):
     completion_rate_sp = (delivered_sp / planned_sp * 100.0) if planned_sp > 0 else 0.0
     utilization_rate = (delivered_sp / plannable_capacity * 100.0) if plannable_capacity > 0 else 0.0
     bug_resolution_rate = (bug_tickets_done / bug_tickets_planned * 100.0) if bug_tickets_planned > 0 else 0.0
+    allocation_rate = (planned_sp / plannable_capacity * 100.0) if plannable_capacity > 0 else 0.0
+    avg_team_delivery = sum(d['delivery_rate'] for d in dev_details) / len(dev_details) if dev_details else 0.0
+    total_leaves = sum(d.get('leaves', 0) for d in dev_details)
+    total_work_days = work_days
 
     # Summary Generation
     summary = f"Sprint {sprint['name']} was completed with a final delivery of {delivered_sp:.1f} SP out of {planned_sp:.1f} SP committed ({completion_rate_sp:.1f}% completion rate). "
@@ -218,6 +230,8 @@ def generate_sprint_report_data(sprint_id):
         "total_team_capacity": float(total_net_sp),
         "plannable_capacity": float(plannable_capacity),
         "utilization_rate": float(utilization_rate),
+        "allocation_rate": float(allocation_rate),
+        "avg_team_delivery": float(avg_team_delivery),
         "planned_tickets": int(planned_tickets),
         "completed_tickets": int(completed_tickets),
         "spillover_tickets": int(spillover_tickets),
@@ -229,6 +243,10 @@ def generate_sprint_report_data(sprint_id):
         "adhoc_buffer_allocated": float(adhoc_buffer_allocated),
         "adhoc_buffer_used": float(adhoc_buffer_used),
         "ceremony_buffer_allocated": float(ceremony_buffer_allocated),
+        "total_leaves": int(total_leaves),
+        "total_work_days": int(total_work_days),
+        "holiday_count": int(holiday_count),
+        "team_size": len(dev_details),
         "dev_details": dev_details,
         "tickets": tickets_flat
     }
@@ -588,17 +606,19 @@ def build_excel_report(report_data):
     return buffer.getvalue()
 
 def build_png_report(report_data):
-    img = PILImage.new('RGB', (1200, 850), color='#0f172a')
+    img = PILImage.new('RGB', (1200, 900), color='#0f172a')
     draw = ImageDraw.Draw(img)
-    
+
     try:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        title_font = ImageFont.truetype(font_path, 30)
-        sub_font = ImageFont.truetype(font_path, 16)
-        kpi_val_font = ImageFont.truetype(font_path, 38)
-        kpi_lbl_font = ImageFont.truetype(font_path, 13)
-        body_font = ImageFont.truetype(font_path, 14)
-        body_bold = ImageFont.truetype(font_path, 15)
+        font_path_regular = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        title_font = ImageFont.truetype(font_path, 28)
+        sub_font = ImageFont.truetype(font_path, 14)
+        kpi_val_font = ImageFont.truetype(font_path, 32)
+        kpi_lbl_font = ImageFont.truetype(font_path, 12)
+        body_font = ImageFont.truetype(font_path_regular, 13)
+        body_bold = ImageFont.truetype(font_path, 13)
+        small_font = ImageFont.truetype(font_path_regular, 11)
     except IOError:
         title_font = ImageFont.load_default()
         sub_font = ImageFont.load_default()
@@ -606,96 +626,132 @@ def build_png_report(report_data):
         kpi_lbl_font = ImageFont.load_default()
         body_font = ImageFont.load_default()
         body_bold = ImageFont.load_default()
-        
-    draw.rectangle([30, 30, 1170, 120], fill="#1e293b", outline="#334155", width=1)
-    draw.text((60, 42), f"Sprint Performance Summary: {report_data['sprint_name']}", fill="#38bdf8", font=title_font)
-    draw.text((60, 82), f"Team: {report_data['team_name']}   |   Planned Dates: {report_data['planned_start_date']} to {report_data['planned_end_date']}   |   Actual: {report_data['actual_start_date']} to {report_data['actual_end_date']}", fill="#94a3b8", font=sub_font)
-    
-    col_width = 265
-    gap = 25
+        small_font = ImageFont.load_default()
+
+    # Header
+    draw.rectangle([0, 0, 1200, 100], fill="#1e293b", outline="#334155", width=1)
+    draw.text((40, 15), f"Sprint Performance Dashboard", fill="#38bdf8", font=title_font)
+    draw.text((40, 55), f"Sprint: {report_data['sprint_name']}  |  Team: {report_data['team_name']}  |  {report_data['planned_start_date']} to {report_data['actual_end_date']}", fill="#94a3b8", font=small_font)
+    draw.text((40, 75), f"Generated: {report_data.get('generated_at', '')[:19].replace('T', ' ')}", fill="#64748b", font=small_font)
+
+    # Primary KPIs row
+    col_width = 285
+    gap = 15
     kpis = [
+        {"val": f"{report_data['planned_sp']:.1f}", "lbl": "Committed SP", "color": "#a78bfa"},
         {"val": f"{report_data['delivered_sp']:.1f}", "lbl": "Delivered SP", "color": "#4ade80"},
         {"val": f"{report_data['completion_rate_sp']:.0f}%", "lbl": "Completion Rate", "color": "#60a5fa"},
-        {"val": f"{report_data['utilization_rate']:.0f}%", "lbl": "Net Capacity Util", "color": "#a78bfa"},
-        {"val": f"{report_data['bug_resolution_rate']:.0f}%", "lbl": "Production Bug Res", "color": "#f87171"}
+        {"val": f"{report_data['utilization_rate']:.0f}%", "lbl": "Net Utilization", "color": "#f472b6"}
     ]
-    
+
     for idx, kpi in enumerate(kpis):
         x1 = 30 + idx * (col_width + gap)
-        y1 = 150
+        y1 = 115
         x2 = x1 + col_width
-        y2 = 270
+        y2 = 205
         draw.rectangle([x1, y1, x2, y2], fill="#1e293b", outline="#334155", width=1)
-        draw.text((30 + x1, y1 + 25), kpi["val"], fill=kpi["color"], font=kpi_val_font)
-        draw.text((30 + x1, y1 + 75), kpi["lbl"], fill="#94a3b8", font=kpi_lbl_font)
-        
-    draw.rectangle([30, 300, 680, 810], fill="#1e293b", outline="#334155", width=1)
-    draw.text((60, 325), "Executive Summary", fill="#38bdf8", font=sub_font)
-    
+        draw.text((x1 + 15, y1 + 15), kpi["val"], fill=kpi["color"], font=kpi_val_font)
+        draw.text((x1 + 15, y1 + 60), kpi["lbl"], fill="#94a3b8", font=kpi_lbl_font)
+
+    # Left panel - Summary & Team
+    draw.rectangle([30, 225, 620, 580], fill="#1e293b", outline="#334155", width=1)
+    draw.text((50, 240), "Executive Summary", fill="#38bdf8", font=sub_font)
+
     summary_text = report_data['summary']
     words = summary_text.split()
     lines = []
     current_line = []
     for w in words:
         current_line.append(w)
-        if len(" ".join(current_line)) > 70:
+        if len(" ".join(current_line)) > 60:
             lines.append(" ".join(current_line[:-1]))
             current_line = [w]
     if current_line:
         lines.append(" ".join(current_line))
-        
-    y_offset = 360
-    for l in lines[:8]:
-        draw.text((60, y_offset), l, fill="#cbd5e1", font=body_font)
-        y_offset += 24
-        
-    draw.text((60, y_offset + 15), "Developer Deliveries", fill="#38bdf8", font=sub_font)
-    table_y = y_offset + 45
-    draw.text((60, table_y), "Developer", fill="#94a3b8", font=body_bold)
-    draw.text((250, table_y), "Role", fill="#94a3b8", font=body_bold)
-    draw.text((360, table_y), "Net Cap", fill="#94a3b8", font=body_bold)
-    draw.text((460, table_y), "Committed", fill="#94a3b8", font=body_bold)
-    draw.text((570, table_y), "Done %", fill="#94a3b8", font=body_bold)
-    
-    for dev in report_data['dev_details'][:6]:
-        table_y += 28
-        draw.text((60, table_y), dev['name'][:18], fill="#e2e8f0", font=body_font)
-        draw.text((250, table_y), dev['role'][:10], fill="#cbd5e1", font=body_font)
-        draw.text((360, table_y), f"{dev['capacity']:.1f}", fill="#cbd5e1", font=body_font)
-        draw.text((460, table_y), f"{dev['allocated']:.1f}", fill="#cbd5e1", font=body_font)
-        draw.text((570, table_y), f"{dev['delivery_rate']:.1f}%", fill="#4ade80" if dev['delivery_rate'] >= 80 else "#fb7185", font=body_font)
-        
-    draw.rectangle([710, 300, 1170, 810], fill="#1e293b", outline="#334155", width=1)
-    draw.text((740, 325), "Buffer Utilization & Delivery Matrix", fill="#38bdf8", font=sub_font)
-    
-    # Bug buffer progress bar
-    draw.text((740, 375), f"Bug Buffer: {report_data['bug_buffer_used']:.1f} / {report_data['bug_buffer_allocated']:.1f} SP", fill="#cbd5e1", font=body_font)
-    draw.rectangle([740, 400, 1140, 415], fill="#0f172a", outline="#334155")
-    bug_p = (report_data['bug_buffer_used'] / report_data['bug_buffer_allocated']) if report_data['bug_buffer_allocated'] > 0 else 0
-    bug_w = int(400 * min(bug_p, 1))
-    draw.rectangle([740, 400, 740 + bug_w, 415], fill="#f87171")
-    
-    # Adhoc buffer progress bar
-    draw.text((740, 445), f"Adhoc Buffer: {report_data['adhoc_buffer_used']:.1f} / {report_data['adhoc_buffer_allocated']:.1f} SP", fill="#cbd5e1", font=body_font)
-    draw.rectangle([740, 470, 1140, 485], fill="#0f172a", outline="#334155")
-    adhoc_p = (report_data['adhoc_buffer_used'] / report_data['adhoc_buffer_allocated']) if report_data['adhoc_buffer_allocated'] > 0 else 0
-    adhoc_w = int(400 * min(adhoc_p, 1))
-    draw.rectangle([740, 470, 740 + adhoc_w, 485], fill="#fb923c")
-    
-    stat_y = 530
-    draw.text((740, stat_y), "Sprint Activity & Resolution Highlights", fill="#38bdf8", font=sub_font)
-    stat_rows = [
-        ("Total Tickets committed in backlog", f"{report_data['planned_tickets']}"),
-        ("Completed and delivered tickets", f"{report_data['completed_tickets']}"),
-        ("Spillover/Incomplete tickets", f"{report_data['spillover_tickets']}"),
-        ("Production issues (Bugs) committed", f"{report_data['bug_tickets_planned']}"),
-        ("Production issues (Bugs) resolved", f"{report_data['bug_tickets_done']}"),
+
+    y_offset = 265
+    for l in lines[:6]:
+        draw.text((50, y_offset), l, fill="#cbd5e1", font=body_font)
+        y_offset += 18
+
+    draw.text((50, y_offset + 10), "Team Performance", fill="#38bdf8", font=sub_font)
+    table_y = y_offset + 35
+    draw.text((50, table_y), "Name", fill="#94a3b8", font=body_bold)
+    draw.text((180, table_y), "Role", fill="#94a3b8", font=body_bold)
+    draw.text((270, table_y), "Capacity", fill="#94a3b8", font=body_bold)
+    draw.text((360, table_y), "Allocated", fill="#94a3b8", font=body_bold)
+    draw.text((450, table_y), "Done %", fill="#94a3b8", font=body_bold)
+
+    for dev in report_data['dev_details'][:5]:
+        table_y += 22
+        draw.text((50, table_y), dev['name'][:15], fill="#e2e8f0", font=body_font)
+        draw.text((180, table_y), dev['role'][:8], fill="#cbd5e1", font=body_font)
+        draw.text((270, table_y), f"{dev['capacity']:.1f}", fill="#cbd5e1", font=body_font)
+        draw.text((360, table_y), f"{dev['allocated']:.1f}", fill="#cbd5e1", font=body_font)
+        draw.text((450, table_y), f"{dev['delivery_rate']:.0f}%", fill="#4ade80" if dev['delivery_rate'] >= 80 else "#fb7185", font=body_font)
+
+    # Right panel - Buffer & Metrics
+    draw.rectangle([640, 225, 1170, 580], fill="#1e293b", outline="#334155", width=1)
+    draw.text((660, 240), "Capacity & Buffers", fill="#38bdf8", font=sub_font)
+
+    metrics = [
+        ("Total Team Capacity", f"{report_data['total_team_capacity']:.1f} SP"),
+        ("Plannable Capacity", f"{report_data['plannable_capacity']:.1f} SP"),
+        ("Allocation Rate", f"{report_data.get('allocation_rate', 0):.1f}%"),
+        ("Bug Buffer", f"{report_data['bug_buffer_used']:.1f} / {report_data['bug_buffer_allocated']:.1f} SP"),
+        ("Adhoc Buffer", f"{report_data['adhoc_buffer_used']:.1f} / {report_data['adhoc_buffer_allocated']:.1f} SP"),
+        ("Ceremony Buffer", f"{report_data['ceremony_buffer_allocated']:.1f} SP"),
     ]
-    for lbl, val in stat_rows:
-        stat_y += 32
-        draw.text((740, stat_y), lbl, fill="#94a3b8", font=body_font)
-        draw.text((1100, stat_y), val, fill="#e2e8f0", font=body_bold)
-        
+
+    metric_y = 265
+    for lbl, val in metrics:
+        draw.text((660, metric_y), lbl, fill="#94a3b8", font=body_font)
+        draw.text((1050, metric_y), val, fill="#e2e8f0", font=body_bold)
+        metric_y += 22
+
+    # Buffer progress bars
+    bar_y = metric_y + 20
+    bug_p = (report_data['bug_buffer_used'] / report_data['bug_buffer_allocated']) if report_data['bug_buffer_allocated'] > 0 else 0
+    draw.text((660, bar_y), "Bug Buffer Usage", fill="#94a3b8", font=small_font)
+    draw.rectangle([660, bar_y + 18, 1140, bar_y + 30], fill="#0f172a", outline="#334155")
+    draw.rectangle([660, bar_y + 18, 660 + int(480 * min(bug_p, 1)), bar_y + 30], fill="#f87171")
+
+    bar_y += 45
+    adhoc_p = (report_data['adhoc_buffer_used'] / report_data['adhoc_buffer_allocated']) if report_data['adhoc_buffer_allocated'] > 0 else 0
+    draw.text((660, bar_y), "Adhoc Buffer Usage", fill="#94a3b8", font=small_font)
+    draw.rectangle([660, bar_y + 18, 1140, bar_y + 30], fill="#0f172a", outline="#334155")
+    draw.rectangle([660, bar_y + 18, 660 + int(480 * min(adhoc_p, 1)), bar_y + 30], fill="#fb923c")
+
+    # Bottom panel - Sprint Activity
+    draw.rectangle([30, 600, 1170, 880], fill="#1e293b", outline="#334155", width=1)
+    draw.text((50, 615), "Sprint Activity & Resolution Highlights", fill="#38bdf8", font=sub_font)
+
+    stat_rows = [
+        ("Total Tickets Committed", f"{report_data['planned_tickets']}"),
+        ("Completed & Delivered", f"{report_data['completed_tickets']}"),
+        ("Spillover/Incomplete", f"{report_data['spillover_tickets']}"),
+        ("Production Bugs Committed", f"{report_data['bug_tickets_planned']}"),
+        ("Production Bugs Resolved", f"{report_data['bug_tickets_done']}"),
+        ("Bug Resolution Rate", f"{report_data['bug_resolution_rate']:.1f}%"),
+        ("Team Size", f"{report_data.get('team_size', 'N/A')}"),
+        ("Total Work Days", f"{report_data.get('total_work_days', 'N/A')}"),
+    ]
+
+    col1_y = 645
+    col2_y = 645
+    for i, (lbl, val) in enumerate(stat_rows):
+        if i < 4:
+            draw.text((50, col1_y), lbl, fill="#94a3b8", font=body_font)
+            draw.text((280, col1_y), val, fill="#e2e8f0", font=body_bold)
+            col1_y += 28
+        else:
+            draw.text((400, col2_y), lbl, fill="#94a3b8", font=body_font)
+            draw.text((620, col2_y), val, fill="#e2e8f0", font=body_bold)
+            col2_y += 28
+
+    # Footer
+    draw.text((50, 855), "Confidential - For Internal Stakeholder Review", fill="#64748b", font=small_font)
+
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     buffer.seek(0)
