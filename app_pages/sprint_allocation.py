@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 from utils.db import (
     get_sprints, get_team, get_leaves, get_holidays, get_backlog,
-    update_ticket, clear_db_caches,
+    update_ticket, clear_db_caches, add_ticket_comment, get_ticket_comments,
 )
 from utils.helpers import get_workdays, get_dev_allocated_sp, compute_sp, compute_actual_sp
 
@@ -156,11 +156,44 @@ def _auto_save_changes(editor_key):
     clear_db_caches()
     st.session_state[f"{editor_key}_saved"] = True
 
+def _get_completion_indicators(row):
+    """Return completion status indicators for visual display."""
+    # Helper to check if status is done
+    def is_done(val):
+        return str(val).lower() == 'done' if pd.notna(val) else False
+
+    status_done = is_done(row.get('status'))
+    be_done = is_done(row.get('backend_status'))
+    fe_done = is_done(row.get('frontend_status'))
+    qa_done = is_done(row.get('qa_status'))
+
+    # Build indicator string
+    indicators = []
+
+    if status_done and be_done and fe_done and qa_done:
+        indicators.append("🟢 Live")  # All done + status done
+    elif status_done:
+        indicators.append("🟢 Done")  # Just status done
+    else:
+        # Show individual role completion
+        if be_done:
+            indicators.append("🔵 BE")
+        if fe_done:
+            indicators.append("🟡 FE")
+        if qa_done:
+            indicators.append("🟠 QA")
+
+    return " ".join(indicators) if indicators else "⚪ Todo"
+
+
 def _render_editable_task_table(df, dev_name=None, tab_key=""):
     """Render an editable task table for admin users"""
     if df.empty:
         st.info("No tasks found.", icon=":material/info:")
         return
+
+    # Detect JIRA column
+    has_jira_col = "jira_url" in df.columns and df["jira_url"].notna().any()
 
     # Select columns to display (must include 'id' for mapping back to original task)
     cols = ["id", "ticket_id", "title", "category", "assignee", "backend_assignee", "frontend_assignee", "qa_assignee",
@@ -175,6 +208,13 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
     available = [c for c in cols if c in df.columns]
     view_df = df[available].copy().reset_index(drop=True)
 
+    # Add JIRA link column if present
+    if has_jira_col:
+        view_df['jira_url'] = df['jira_url'].values
+
+    # Add completion indicators column
+    view_df['completion'] = view_df.apply(_get_completion_indicators, axis=1)
+
     # Convert date columns
     for col in available:
         if "date" in col:
@@ -188,6 +228,7 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
     team_names = team_df["name"].tolist()
     col_config = {
         "id": None,  # Hide the ID column
+        "completion": st.column_config.TextColumn("Progress", width="small", disabled=True),
         "ticket_id": st.column_config.TextColumn("Ticket", width="small", disabled=True),
         "title": st.column_config.TextColumn("Title", width="medium", disabled=True),
         "category": st.column_config.SelectboxColumn("Category", options=["New Work", "Spillover", "Bug Fix", "Adhoc"], width="small"),
@@ -214,6 +255,9 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
         "actual_sp": st.column_config.NumberColumn("Actual SP", min_value=0.0, step=0.5, width="small", disabled=True),
     }
 
+    if has_jira_col:
+        col_config["jira_url"] = st.column_config.LinkColumn("JIRA", width="small", display_text="Open")
+
     # Store view_df mapping in session state for the auto-save callback
     st.session_state[f"{tab_key}_view_df"] = view_df
 
@@ -226,6 +270,105 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
         use_container_width=True,
         on_change=lambda: _auto_save_changes(tab_key),
     )
+
+def _render_ticket_comments(sprint_id, ticket_id, ticket_title, tab_idx, safe_id,
+                            be_assignee=None, fe_assignee=None, qa_assignee=None,
+                            jira_url=None, completion=None):
+    """Render a collapsible comment thread for a single ticket (latest first)."""
+    comments = get_ticket_comments(sprint_id, ticket_id)
+
+    # Build expander label with assignees + JIRA link inline
+    parts = []
+    if be_assignee and be_assignee not in ("", "NA", None):
+        parts.append(f"🔵 BE: {be_assignee}")
+    if fe_assignee and fe_assignee not in ("", "NA", None):
+        parts.append(f"🟡 FE: {fe_assignee}")
+    if qa_assignee and qa_assignee not in ("", "NA", None):
+        parts.append(f"🟠 QA: {qa_assignee}")
+    assignee_tag = "  |  ".join(parts)
+
+    label = f"{ticket_id} — {ticket_title}  ({len(comments)})"
+    if completion and completion != "⚪ Todo":
+        label = f"{label}  {completion}"
+    if assignee_tag:
+        label = f"{label}  |  {assignee_tag}"
+    if jira_url:
+        label = f"{label}  |  [JIRA ↗]({jira_url})"
+
+    with st.expander(label, expanded=False):
+        if comments:
+            for c in reversed(comments):
+                author = c.get("author", "Unknown")
+                created = c.get("created", "")
+                # Show date only (YYYY-MM-DD) for brevity
+                date_str = created[:10] if created else ""
+                if c.get("source") == "jira":
+                    source_tag = " · JIRA"
+                elif c.get("synced"):
+                    source_tag = " · synced"
+                else:
+                    source_tag = " · local"
+                body = c.get("body", "")
+                st.markdown(f"**{author}** · {date_str}{source_tag}")
+                st.caption(body)
+                st.divider()
+        else:
+            st.caption("No comments yet.")
+
+        # Add new comment with @mention support
+        user_name = st.session_state.user.get("name", "")
+        user_email = st.session_state.user.get("email", "")
+        input_key = f"comment_input_{tab_idx}_{safe_id}"
+        btn_key = f"comment_btn_{tab_idx}_{safe_id}"
+        mention_key = f"mention_{tab_idx}_{safe_id}"
+
+        # Build mention options: all team members (JIRA account ID optional)
+        mention_options = {}
+        for _, member in team_df.iterrows():
+            m_name = member.get("name", "")
+            m_jira_id = member.get("jira_account_id")
+            if m_name:
+                mention_options[m_name] = m_jira_id  # None if no JIRA account linked
+
+        # Tag picker (only if there are other team members to tag)
+        selectable = [n for n in mention_options.keys() if n != user_name]
+        selected_mentions = []
+        if selectable:
+            # Show current tags as chips above the picker
+            selected_mentions = st.multiselect(
+                "Tag team members",
+                options=selectable,
+                key=mention_key,
+                placeholder="Select to @mention",
+            )
+
+        # Show selected tags as inline chips
+        if selected_mentions:
+            tag_chips = " ".join([f"`@{m}`" for m in selected_mentions])
+            st.markdown(f"**Tagging:** {tag_chips}", help="These @mentions will be appended to your comment")
+
+        new_comment = st.text_area(
+            "Add comment",
+            key=input_key,
+            placeholder="What happened on this ticket? (dev/QA update)",
+            height=80,
+        )
+
+        if st.button("Add comment", key=btn_key):
+            body = new_comment.strip()
+            # Append @mentions to the comment body
+            if selected_mentions:
+                mention_str = " ".join([f"@{m}" for m in selected_mentions])
+                body = f"{body} {mention_str}".strip() if body else mention_str
+            if body:
+                add_ticket_comment(sprint_id, ticket_id, user_name, user_email, body, mention_options=mention_options)
+                # Reset inputs
+                st.session_state[input_key] = ""
+                if mention_key in st.session_state:
+                    del st.session_state[mention_key]
+                st.rerun()
+            else:
+                st.warning("Comment cannot be empty.")
 
 # Build tab list: each developer + Unassigned
 dev_names = team_df["name"].tolist()
@@ -248,6 +391,7 @@ tabs = st.tabs(tab_labels)
 for i, dev_name in enumerate(dev_names):
     with tabs[i]:
         cap = dev_caps[dev_name]
+        dev_role = team_df[team_df["name"] == dev_name]["role"].values[0] if dev_name in team_df["name"].values else None
 
         # Metrics row
         m1, m2, m3, m4, m5 = st.columns(5)
@@ -259,9 +403,86 @@ for i, dev_name in enumerate(dev_names):
         delta_color = "normal" if cap["remaining"] >= 0 else "inverse"
         m5.metric("Remaining", f"{cap['remaining']}", delta=f"{cap['remaining']:+.1f}", delta_color=delta_color)
 
-        # Editable task table for this developer
+        # Get dev tasks for this developer
         dev_tasks = _get_dev_tasks(dev_name)
+
+        # --- Filters ---
+        # Map dev role to default role filter selection
+        role_filter_options = ["All", "Assignee", "BE", "FE", "QA"]
+        role_to_filter = {
+            "Backend": "BE",
+            "Frontend": "FE",
+            "QA": "QA",
+            "Fullstack": "All",
+        }
+        default_role_filter = role_to_filter.get(dev_role, "All")
+
+        f1, f2 = st.columns(2)
+        with f1:
+            role_filter = st.selectbox(
+                "Filter by role",
+                role_filter_options,
+                index=role_filter_options.index(default_role_filter),
+                key=f"role_filter_{i}",
+            )
+        with f2:
+            status_filter = st.multiselect(
+                "Filter by status",
+                ["Todo", "In Progress", "Done"],
+                default=["Todo", "In Progress"],
+                key=f"status_filter_{i}",
+            )
+
+        # Apply role filter
+        if role_filter == "Assignee":
+            dev_tasks = dev_tasks[dev_tasks["assignee"] == dev_name]
+        elif role_filter == "BE":
+            dev_tasks = dev_tasks[dev_tasks["backend_assignee"] == dev_name]
+        elif role_filter == "FE":
+            dev_tasks = dev_tasks[dev_tasks["frontend_assignee"] == dev_name]
+        elif role_filter == "QA":
+            dev_tasks = dev_tasks[dev_tasks["qa_assignee"] == dev_name]
+        # "All" shows all tasks for this dev (already filtered by _get_dev_tasks)
+
+        # Apply status filter
+        if status_filter:
+            # Combine all role statuses for filtering
+            def _row_status_in_filter(row):
+                statuses = []
+                if pd.notna(row.get('status')):
+                    statuses.append(str(row['status']))
+                if pd.notna(row.get('backend_status')) and row.get('backend_status') != 'NA':
+                    statuses.append(str(row['backend_status']))
+                if pd.notna(row.get('frontend_status')) and row.get('frontend_status') != 'NA':
+                    statuses.append(str(row['frontend_status']))
+                if pd.notna(row.get('qa_status')) and row.get('qa_status') != 'NA':
+                    statuses.append(str(row['qa_status']))
+                # If any of the statuses match the filter, show the row
+                return any(s in status_filter for s in statuses)
+
+            status_mask = dev_tasks.apply(_row_status_in_filter, axis=1)
+            dev_tasks = dev_tasks[status_mask]
+
+        # Editable task table for this developer
         _render_editable_task_table(dev_tasks, dev_name=dev_name, tab_key=f"dev_{i}")
+
+        # Per-ticket comment threads for this developer
+        if not dev_tasks.empty:
+            st.markdown("**Ticket activity**")
+            st.caption("Local comments auto-push to JIRA for synced tickets. Sync from JIRA to pull remote comments. Latest first.")
+            for tidx, (_, trow) in enumerate(dev_tasks.iterrows()):
+                tid = trow.get("ticket_id", f"row-{tidx}")
+                ttitle = trow.get("title", "")
+                # Sanitize ticket ID for use in Streamlit widget keys (hyphens invalid)
+                safe_tid = str(tid).replace("-", "_")
+                _render_ticket_comments(
+                    s_id, tid, ttitle, tab_idx=f"{i}_{tidx}", safe_id=safe_tid,
+                    be_assignee=trow.get("backend_assignee"),
+                    fe_assignee=trow.get("frontend_assignee"),
+                    qa_assignee=trow.get("qa_assignee"),
+                    jira_url=trow.get("jira_url"),
+                    completion=_get_completion_indicators(trow),
+                )
 
 # Unassigned tab
 with tabs[-1]:

@@ -328,9 +328,10 @@ else:
                             'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
                     if col in my_tasks_display.columns:
                         my_tasks_display[col] = pd.to_datetime(my_tasks_display[col], format='mixed', errors='coerce').dt.date
-                my_tasks_display = my_tasks_display.set_index('id')
+                my_tasks_display = my_tasks_display.reset_index(drop=True)
 
                 my_col_config={
+                    'id': None,  # Hidden — used for mapping edits back to DB
                     'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
                     'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
                     'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
@@ -363,53 +364,65 @@ else:
                 my_cols = [c for c in my_tasks_display.columns if c not in ('id', '_id')]
                 visible_my = _column_filter_ui("my_task_editor", my_cols)
                 my_display = my_tasks_display[visible_my]
+
+                def _auto_save_my_tasks():
+                    edited = st.session_state.get("my_task_editor", {}).get("edited_rows", {})
+                    if not edited:
+                        return
+                    for row_idx, changes in edited.items():
+                        row = my_display.iloc[row_idx]
+                        idx = row['id']
+                        orig = tasks[tasks['id'] == idx].iloc[0] if idx in tasks['id'].values else None
+                        if orig is None:
+                            continue
+                        today_str = date.today().isoformat()
+                        new_status = changes.get('status', row.get('status')) or 'Todo'
+                        start_str = str(changes.get('start_date', row.get('start_date'))) if pd.notna(changes.get('start_date', row.get('start_date'))) else None
+                        end_str = str(changes.get('end_date', row.get('end_date'))) if pd.notna(changes.get('end_date', row.get('end_date'))) else None
+
+                        old_status = orig.get('status') or 'Todo'
+                        if new_status == 'In Progress' and old_status != 'In Progress' and not start_str:
+                            start_str = today_str
+                        if new_status == 'Done' and old_status != 'Done' and not end_str:
+                            end_str = today_str
+                        if new_status == 'Todo' and old_status != 'Todo':
+                            start_str = None
+                            end_str = None
+
+                        update_ticket(
+                            idx, orig['ticket_id'], orig['title'],
+                            changes.get('assignee', row.get('assignee')) or orig['assignee'],
+                            orig['category'],
+                            float(changes.get('sp', row.get('sp'))),
+                            float(changes.get('actual_sp', row.get('actual_sp'))),
+                            new_status, start_str, end_str,
+                            backend_assignee=changes.get('backend_assignee', row.get('backend_assignee')),
+                            frontend_assignee=changes.get('frontend_assignee', row.get('frontend_assignee')),
+                            qa_assignee=changes.get('qa_assignee', row.get('qa_assignee')),
+                            backend_sp=float(changes.get('backend_sp', row.get('backend_sp')) or 0),
+                            frontend_sp=float(changes.get('frontend_sp', row.get('frontend_sp')) or 0),
+                            qa_sp=float(changes.get('qa_sp', row.get('qa_sp')) or 0),
+                            backend_status=changes.get('backend_status', row.get('backend_status')),
+                            frontend_status=changes.get('frontend_status', row.get('frontend_status')),
+                            qa_status=changes.get('qa_status', row.get('qa_status')),
+                        )
+                    clear_db_caches()
+                    st.session_state["my_task_editor_saved"] = True
+
                 st.markdown(_freeze_columns_js("my_task_editor", freeze_n=3), unsafe_allow_html=True)
-                edited_my_tasks = st.data_editor(
+                st.data_editor(
                     my_display,
                     column_config=my_col_config,
                     key="my_task_editor",
                     hide_index=True,
                     num_rows="dynamic",
                     use_container_width=True,
+                    on_change=_auto_save_my_tasks,
                 )
 
-                col_save, _ = st.columns([2, 4])
-                if col_save.button("Save my changes", type="primary"):
-                    for idx, row in edited_my_tasks.iterrows():
-                        orig = tasks[tasks['id'] == idx].iloc[0] if idx in tasks['id'].values else None
-                        today_str = date.today().isoformat()
-                        new_status = row.get('status') or 'Todo'
-                        start_str = str(row['start_date']) if pd.notna(row.get('start_date')) else None
-                        end_str = str(row['end_date']) if pd.notna(row.get('end_date')) else None
-
-                        if orig is not None:
-                            old_status = orig.get('status') or 'Todo'
-                            if new_status == 'In Progress' and old_status != 'In Progress' and not start_str:
-                                start_str = today_str
-                            if new_status == 'Done' and old_status != 'Done' and not end_str:
-                                end_str = today_str
-                            if new_status == 'Todo' and old_status != 'Todo':
-                                start_str = None
-                                end_str = None
-
-                            # Use pre-computed values from display
-                            sp_val = float(row['sp'])
-                            actual_sp_val = float(row['actual_sp'])
-                            update_ticket(
-                                idx, orig['ticket_id'], orig['title'], row.get('assignee') or orig['assignee'], orig['category'],
-                                sp_val, actual_sp_val, new_status, start_str, end_str,
-                                backend_assignee=row.get('backend_assignee'),
-                                frontend_assignee=row.get('frontend_assignee'),
-                                qa_assignee=row.get('qa_assignee'),
-                                backend_sp=float(row.get('backend_sp') or 0),
-                                frontend_sp=float(row.get('frontend_sp') or 0),
-                                qa_sp=float(row.get('qa_sp') or 0),
-                                backend_status=row.get('backend_status'),
-                                frontend_status=row.get('frontend_status'),
-                                qa_status=row.get('qa_status'),
-                            )
-                    if "my_task_editor" in st.session_state:
-                        del st.session_state["my_task_editor"]
+                # Rerun outside callback so the table reflects saved state
+                if st.session_state.get("my_task_editor_saved"):
+                    del st.session_state["my_task_editor_saved"]
                     st.rerun()
             else:
                 st.info("You currently have no tasks assigned to you in this sprint.")
@@ -427,17 +440,38 @@ else:
                 if has_jira_col:
                     other_display['jira_url'] = other_tasks['jira_url']
                 other_display['sprint'] = selected_sprint_name
-                other_display['backend_sp'] = other_display['backend_sp'].fillna(0).astype(float)
-                other_display['frontend_sp'] = other_display['frontend_sp'].fillna(0).astype(float)
-                other_display['qa_sp'] = other_display['qa_sp'].fillna(0).astype(float)
-                other_display['total_dev_sp'] = other_display['backend_sp'] + other_display['frontend_sp']
-                other_display['est_sp'] = other_display['total_dev_sp'] + other_display['qa_sp']
                 for col in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
                             'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
                     if col in other_display.columns:
                         other_display[col] = pd.to_datetime(other_display[col], format='mixed', errors='coerce').dt.date
                 other_display['actual_sp'] = other_display['actual_sp'].fillna(0).astype(float)
-                other_col_config = {}
+                other_col_config = {
+                    'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
+                    'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
+                    'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
+                    'assignee': st.column_config.TextColumn('Assignee', width='small', disabled=True),
+                    'category': st.column_config.TextColumn('Category', width='small', disabled=True),
+                    'status': st.column_config.TextColumn('Status', width='small', disabled=True),
+                    'backend_status': st.column_config.TextColumn('Backend Status', width='small', disabled=True),
+                    'frontend_status': st.column_config.TextColumn('Frontend Status', width='small', disabled=True),
+                    'qa_status': st.column_config.TextColumn('QA Status', width='small', disabled=True),
+                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'start_date': st.column_config.DateColumn('Start', width='small'),
+                    'end_date': st.column_config.DateColumn('End', width='small'),
+                    'backend_start_date': st.column_config.DateColumn('Backend Start', width='small'),
+                    'backend_end_date': st.column_config.DateColumn('Backend End', width='small'),
+                    'frontend_start_date': st.column_config.DateColumn('Frontend Start', width='small'),
+                    'frontend_end_date': st.column_config.DateColumn('Frontend End', width='small'),
+                    'qa_start_date': st.column_config.DateColumn('QA Start', width='small'),
+                    'qa_end_date': st.column_config.DateColumn('QA End', width='small'),
+                    'backend_assignee': st.column_config.TextColumn('Backend', width='small', disabled=True),
+                    'frontend_assignee': st.column_config.TextColumn('Frontend', width='small', disabled=True),
+                    'qa_assignee': st.column_config.TextColumn('QA', width='small', disabled=True),
+                }
                 if has_jira_col:
                     other_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
                 # Column visibility filter for team backlog read-only
@@ -491,8 +525,10 @@ else:
                 tasks_display['jira_url'] = filtered_tasks['jira_url']
                 tasks_display['jira_push_status'] = filtered_tasks.get('jira_push_status', None)
             tasks_display['sprint'] = selected_sprint_name
-            tasks_display['start_date'] = pd.to_datetime(tasks_display['start_date'], format='mixed').dt.date
-            tasks_display['end_date'] = pd.to_datetime(tasks_display['end_date'], format='mixed').dt.date
+            for _dc in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
+                        'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
+                if _dc in tasks_display.columns:
+                    tasks_display[_dc] = pd.to_datetime(tasks_display[_dc], format='mixed', errors='coerce').dt.date
             tasks_display['sp'] = tasks_display.apply(compute_sp, axis=1)
             tasks_display['actual_sp'] = tasks_display.apply(compute_actual_sp, axis=1)
             tasks_display['_id'] = filtered_tasks['id'].values

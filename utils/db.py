@@ -849,18 +849,55 @@ def update_ticket_jira_push_status(sprint_id, ticket_id, status, timestamp):
 
 # --- COMMENTS ---
 
-def add_ticket_comment(sprint_id, ticket_id, author, email, body):
-    """Add a local comment to a ticket."""
+def add_ticket_comment(sprint_id, ticket_id, author, email, body, mention_options=None):
+    """Add a local comment to a ticket. Auto-pushes to JIRA if the ticket is JIRA-synced.
+    mention_options: dict of {name: jira_account_id} to convert @name to JIRA-native mentions."""
     db = get_mongo_db()
     tid = get_current_team_id()
     from datetime import datetime, timezone
+    import re
+    synced = False
+    jira_key = None
+
+    # Check if this ticket is linked to a JIRA issue
+    ticket = db['backlog'].find_one(
+        {"team_id": str(tid), "sprint_id": str(sprint_id), "ticket_id": ticket_id},
+        {"jira_key": 1}
+    )
+    if ticket and ticket.get("jira_key"):
+        jira_key = ticket["jira_key"]
+
+    # Convert @name mentions to JIRA-native [~accountid:xxx] syntax
+    jira_body = body
+    if mention_options:
+        for name, account_id in mention_options.items():
+            if account_id:
+                jira_body = re.sub(
+                    re.escape(f"@{name}"),
+                    f"[~accountid:{account_id}]",
+                    jira_body
+                )
+
+    # Push to JIRA if linked and credentials available
+    if jira_key:
+        try:
+            from utils.jira_client import add_comment, _get_auth, _base_url
+            # Verify credentials are configured before attempting push
+            _get_auth()
+            _base_url()
+            jira_body_with_sig = f"{jira_body}\n\n— {author} (via Agile Portal)"
+            add_comment(jira_key, jira_body_with_sig)
+            synced = True
+        except Exception:
+            pass  # Still save locally even if JIRA push fails
+
     comment = {
         "author": author,
         "email": email,
         "body": body,
         "created": datetime.now(timezone.utc).isoformat(),
         "source": "local",
-        "synced": False,
+        "synced": synced,
     }
     db['backlog'].update_one(
         {"team_id": str(tid), "sprint_id": str(sprint_id), "ticket_id": ticket_id},
