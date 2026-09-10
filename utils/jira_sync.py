@@ -1,4 +1,4 @@
-from utils.db import get_mongo_db, get_current_team_id, update_ticket_jira_comments
+from utils.db import get_mongo_db, get_current_team_id, update_ticket_jira_comments, get_team, assign_round_robin
 from utils.jira_client import (
     find_sprint_by_name, get_issues_by_sprint, parse_issue, parse_comment,
     get_comments, _base_url, DEFAULT_STORY_POINTS_FIELD
@@ -49,6 +49,7 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
     """
     db = get_mongo_db()
     tid = get_current_team_id()
+    team_df = get_team()
 
     jira_sprint = find_sprint_by_name(board_id, sprint_name)
     if not jira_sprint:
@@ -85,6 +86,10 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
         matched_name = _match_assignee_by_email(parsed.get("assignee_email"))
         assignee = matched_name if matched_name else parsed["assignee"]
 
+        backend_assignee = assign_round_robin("backend", team_df, sprint_id)
+        frontend_assignee = assign_round_robin("frontend", team_df, sprint_id)
+        qa_assignee = assign_round_robin("qa", team_df, sprint_id)
+
         db['backlog'].insert_one({
             "team_id": str(tid),
             "sprint_id": str(sprint_id),
@@ -104,6 +109,9 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
             "synced_from_jira": True,
             "jira_comments": [],
             "local_comments": [],
+            "backend_assignee": backend_assignee,
+            "frontend_assignee": frontend_assignee,
+            "qa_assignee": qa_assignee,
         })
         added += 1
         existing_keys.add(jira_key)
