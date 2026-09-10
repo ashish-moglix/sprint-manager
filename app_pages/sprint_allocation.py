@@ -7,6 +7,50 @@ from utils.db import (
 )
 from utils.helpers import get_workdays, get_dev_allocated_sp, compute_sp, compute_actual_sp
 
+@st.dialog("Add comment", width="large")
+def _comment_dialog(sprint_id, ticket_id, ticket_title, mention_options, user_name, user_email):
+    """Popup dialog for adding a comment."""
+    st.markdown(f"**{ticket_id} — {ticket_title}**")
+    input_key = f"dialog_comment_input"
+    mention_key = f"dialog_mention"
+
+    selectable = [n for n in mention_options.keys() if n != user_name]
+    selected_mentions = []
+    if selectable:
+        selected_mentions = st.multiselect(
+            "Tag team members",
+            options=selectable,
+            key=mention_key,
+            placeholder="Select to @mention",
+        )
+
+    if selected_mentions:
+        tag_chips = " ".join([f"`@{m}`" for m in selected_mentions])
+        st.markdown(f"**Tagging:** {tag_chips}", help="These @mentions will be appended to your comment")
+
+    new_comment = st.text_area(
+        "Add comment",
+        key=input_key,
+        placeholder="What happened on this ticket? (dev/QA update)",
+        height=120,
+    )
+
+    b1, b2 = st.columns([1, 1])
+    with b1:
+        if st.button("Submit", key="dialog_submit", type="primary", use_container_width=True):
+            body = new_comment.strip()
+            if selected_mentions:
+                mention_str = " ".join([f"@{m}" for m in selected_mentions])
+                body = f"{body} {mention_str}".strip() if body else mention_str
+            if body:
+                add_ticket_comment(sprint_id, ticket_id, user_name, user_email, body, mention_options=mention_options)
+                st.rerun()
+            else:
+                st.warning("Comment cannot be empty.")
+    with b2:
+        if st.button("Cancel", key="dialog_cancel", use_container_width=True):
+            st.rerun()
+
 st.title("Sprint allocation board")
 
 sprints_df = get_sprints()
@@ -274,10 +318,9 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
 def _render_ticket_comments(sprint_id, ticket_id, ticket_title, tab_idx, safe_id,
                             be_assignee=None, fe_assignee=None, qa_assignee=None,
                             jira_url=None, completion=None):
-    """Render a collapsible comment thread for a single ticket (latest first)."""
+    """Render comment thread: expander for history + add-comment button beside it."""
     comments = get_ticket_comments(sprint_id, ticket_id)
 
-    # Build expander label with assignees + JIRA link inline
     parts = []
     if be_assignee and be_assignee not in ("", "NA", None):
         parts.append(f"🔵 BE: {be_assignee}")
@@ -287,88 +330,47 @@ def _render_ticket_comments(sprint_id, ticket_id, ticket_title, tab_idx, safe_id
         parts.append(f"🟠 QA: {qa_assignee}")
     assignee_tag = "  |  ".join(parts)
 
-    label = f"{ticket_id} — {ticket_title}  ({len(comments)})"
+    header = f"{ticket_id} — {ticket_title}"
     if completion and completion != "⚪ Todo":
-        label = f"{label}  {completion}"
+        header = f"{header}  {completion}"
     if assignee_tag:
-        label = f"{label}  |  {assignee_tag}"
+        header = f"{header}  |  {assignee_tag}"
+
+    expander_label = f"{header}  |  💬 {len(comments)}"
     if jira_url:
-        label = f"{label}  |  [JIRA ↗]({jira_url})"
+        expander_label = f"{expander_label}  |  [JIRA ↗]({jira_url})"
 
-    with st.expander(label, expanded=False):
-        if comments:
-            for c in reversed(comments):
-                author = c.get("author", "Unknown")
-                created = c.get("created", "")
-                # Show date only (YYYY-MM-DD) for brevity
-                date_str = created[:10] if created else ""
-                if c.get("source") == "jira":
-                    source_tag = " · JIRA"
-                elif c.get("synced"):
-                    source_tag = " · synced"
-                else:
-                    source_tag = " · local"
-                body = c.get("body", "")
-                st.markdown(f"**{author}** · {date_str}{source_tag}")
-                st.caption(body)
-                st.divider()
-        else:
-            st.caption("No comments yet.")
+    mention_options = {}
+    for _, member in team_df.iterrows():
+        m_name = member.get("name", "")
+        m_jira_id = member.get("jira_account_id")
+        if m_name:
+            mention_options[m_name] = m_jira_id
 
-        # Add new comment with @mention support
-        user_name = st.session_state.user.get("name", "")
-        user_email = st.session_state.user.get("email", "")
-        input_key = f"comment_input_{tab_idx}_{safe_id}"
-        btn_key = f"comment_btn_{tab_idx}_{safe_id}"
-        mention_key = f"mention_{tab_idx}_{safe_id}"
-
-        # Build mention options: all team members (JIRA account ID optional)
-        mention_options = {}
-        for _, member in team_df.iterrows():
-            m_name = member.get("name", "")
-            m_jira_id = member.get("jira_account_id")
-            if m_name:
-                mention_options[m_name] = m_jira_id  # None if no JIRA account linked
-
-        # Tag picker (only if there are other team members to tag)
-        selectable = [n for n in mention_options.keys() if n != user_name]
-        selected_mentions = []
-        if selectable:
-            # Show current tags as chips above the picker
-            selected_mentions = st.multiselect(
-                "Tag team members",
-                options=selectable,
-                key=mention_key,
-                placeholder="Select to @mention",
-            )
-
-        # Show selected tags as inline chips
-        if selected_mentions:
-            tag_chips = " ".join([f"`@{m}`" for m in selected_mentions])
-            st.markdown(f"**Tagging:** {tag_chips}", help="These @mentions will be appended to your comment")
-
-        new_comment = st.text_area(
-            "Add comment",
-            key=input_key,
-            placeholder="What happened on this ticket? (dev/QA update)",
-            height=80,
-        )
-
-        if st.button("Add comment", key=btn_key):
-            body = new_comment.strip()
-            # Append @mentions to the comment body
-            if selected_mentions:
-                mention_str = " ".join([f"@{m}" for m in selected_mentions])
-                body = f"{body} {mention_str}".strip() if body else mention_str
-            if body:
-                add_ticket_comment(sprint_id, ticket_id, user_name, user_email, body, mention_options=mention_options)
-                # Reset inputs
-                st.session_state[input_key] = ""
-                if mention_key in st.session_state:
-                    del st.session_state[mention_key]
-                st.rerun()
+    col_expand, col_add = st.columns([10, 1])
+    with col_expand:
+        with st.expander(expander_label, expanded=False):
+            if comments:
+                for c in reversed(comments):
+                    author = c.get("author", "Unknown")
+                    created = c.get("created", "")
+                    date_str = created[:10] if created else ""
+                    if c.get("source") == "jira":
+                        source_tag = " · JIRA"
+                    elif c.get("synced"):
+                        source_tag = " · synced"
+                    else:
+                        source_tag = " · local"
+                    body = c.get("body", "")
+                    st.markdown(f"**{author}** · {date_str}{source_tag}")
+                    st.caption(body)
+                    st.divider()
             else:
-                st.warning("Comment cannot be empty.")
+                st.caption("No comments yet.")
+    with col_add:
+        if st.button("💬", key=f"add_{tab_idx}_{safe_id}", help="Add comment", use_container_width=True):
+            _comment_dialog(sprint_id, ticket_id, ticket_title, mention_options,
+                           st.session_state.user.get("name", ""), st.session_state.user.get("email", ""))
 
 # Build tab list: each developer + Unassigned
 dev_names = team_df["name"].tolist()
