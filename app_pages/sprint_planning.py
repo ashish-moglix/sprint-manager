@@ -370,7 +370,7 @@ else:
                     if not edited:
                         return
                     for row_idx, changes in edited.items():
-                        row = my_display.iloc[row_idx]
+                        row = my_tasks_display.iloc[row_idx]
                         idx = row['id']
                         orig = tasks[tasks['id'] == idx].iloc[0] if idx in tasks['id'].values else None
                         if orig is None:
