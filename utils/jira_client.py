@@ -111,12 +111,57 @@ def find_sprint_by_name(board_id, sprint_name):
 
 
 def get_issues_by_sprint(board_id, sprint_id, story_points_field="customfield_10119"):
-    """Fetch all issues in a sprint using the Agile REST endpoint. Returns list of issue dicts."""
+    """Fetch all issues in a sprint including subtasks.
+
+    Uses Agile REST for top-level issues, then extracts subtask keys from
+    each issue's 'subtasks' field and fetches them individually.
+    This avoids the unreliable /rest/api/2/search endpoint.
+    """
+    fields = f"summary,assignee,status,issuetype,timetracking,subtasks,{story_points_field}"
+    top_level = _get_issues_by_sprint_agile(board_id, sprint_id, story_points_field, extra_fields="subtasks")
+
+    all_issues = list(top_level)
+    subtask_keys = []
+
+    for issue in top_level:
+        fields_data = issue.get("fields", {}) or {}
+        subtasks_list = fields_data.get("subtasks", []) or []
+        for st in subtasks_list:
+            st_key = st.get("key")
+            if st_key:
+                subtask_keys.append(st_key)
+
+    print(f"[JIRA DEBUG] Agile REST returned {len(top_level)} top-level, found {len(subtask_keys)} subtask keys")
+
+    for st_key in subtask_keys:
+        issue_data = get_issue_by_key(st_key, story_points_field)
+        if issue_data:
+            all_issues.append(issue_data)
+
+    return all_issues
+
+
+def _get_issues_by_sprint_agile(board_id, sprint_id, story_points_field, extra_fields=""):
+    """Fetch top-level issues from Agile REST endpoint (no subtasks by default)."""
+    fields = f"summary,assignee,status,issuetype,timetracking,{story_points_field}"
+    if extra_fields:
+        fields += f",{extra_fields}"
     url = f"{_base_url()}/rest/agile/1.0/board/{board_id}/sprint/{sprint_id}/issue"
-    params = {"maxResults": 200, "fields": f"summary,assignee,status,issuetype,timetracking,{story_points_field}"}
+    params = {"maxResults": 200, "fields": fields}
     resp = requests.get(url, auth=_auth(), headers=_headers(), params=params, timeout=30)
     resp.raise_for_status()
     return resp.json().get("issues", [])
+
+
+def get_issue_by_key(issue_key, story_points_field="customfield_10119"):
+    """Fetch a single issue by key including its subtask/parent fields."""
+    url = f"{_base_url()}/rest/api/2/issue/{issue_key}"
+    params = {"fields": f"summary,assignee,status,issuetype,timetracking,parent,subtasks,{story_points_field}"}
+    resp = requests.get(url, auth=_auth(), headers=_headers(), params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
 
 
 def get_comments(issue_key):
@@ -178,6 +223,7 @@ def parse_issue(issue, base_url, story_points_field="customfield_10119"):
     assignee = fields.get("assignee") or {}
     issue_type = fields.get("issuetype", {}) or {}
     status = fields.get("status", {}) or {}
+    parent = fields.get("parent", {}) or {}
 
     sp = (fields.get(story_points_field)
           or fields.get("customfield_10016")
@@ -201,6 +247,7 @@ def parse_issue(issue, base_url, story_points_field="customfield_10119"):
         "sp": sp,
         "jira_status": status.get("name", ""),
         "issue_type": issue_type.get("name", ""),
+        "parent_key": parent.get("key", ""),
     }
 
 

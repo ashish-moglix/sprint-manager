@@ -185,11 +185,14 @@ else:
                         )
                     if result.get("error"):
                         st.warning(result["error"])
-                    elif result["added"] > 0:
-                        st.success(f"Added {result['added']} new ticket(s) from JIRA. {result['skipped']} already existed.")
-                        st.rerun()
                     else:
-                        st.info("No new tickets found in JIRA. All tickets already synced.")
+                        if result["added"] > 0:
+                            st.success(f"Added {result['added']} new ticket(s) from JIRA. {result['skipped']} already existed.")
+                            st.rerun()
+                        else:
+                            st.info("No new tickets found in JIRA. All tickets already synced.")
+                        if result.get("errors"):
+                            st.warning(f"{len(result['errors'])} ticket(s) failed to sync: " + "; ".join(result["errors"]))
             with c_info:
                 st.caption(f"Board ID: {jira_cfg['board_id']} | Syncs tickets from JIRA sprint '{selected_sprint_name}'")
 
@@ -266,7 +269,7 @@ else:
     if not tasks.empty:
         if not is_selected_active:
             st.subheader(f"Backlog for '{selected_sprint_name}' (Read-Only - {selected_s_row['status']})")
-            tasks_display = tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date',
+            tasks_display = tasks[['ticket_id', 'title', 'assignee', 'category', 'issue_type', 'sp', 'actual_sp', 'status', 'start_date', 'end_date',
                                    'backend_assignee', 'frontend_assignee', 'qa_assignee',
                                    'backend_sp', 'frontend_sp', 'qa_sp',
                                    'backend_start_date', 'backend_end_date',
@@ -313,6 +316,7 @@ else:
             st.subheader("My Assigned Tasks (Active Sprint)")
             if not my_tasks.empty:
                 my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'assignee', 'backend_assignee', 'frontend_assignee', 'qa_assignee',
+                                              'issue_type',
                                               'status', 'backend_status', 'frontend_status', 'qa_status',
                                               'sp', 'backend_sp', 'frontend_sp', 'qa_sp', 'actual_sp',
                                               'start_date', 'end_date',
@@ -335,6 +339,7 @@ else:
                     'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
                     'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
                     'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
+                    'issue_type': st.column_config.TextColumn('Type', width='small', disabled=True),
                     'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
                     'backend_assignee': st.column_config.SelectboxColumn('Backend', options=['NA'] + team_df['name'].tolist(), width='small'),
                     'frontend_assignee': st.column_config.SelectboxColumn('Frontend', options=['NA'] + team_df['name'].tolist(), width='small'),
@@ -430,7 +435,7 @@ else:
             # 2. Show Other Tasks (Read-Only)
             if not other_tasks.empty:
                 st.subheader("Team's Backlog (Read-Only)")
-                other_display = other_tasks[['ticket_id', 'title', 'assignee', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date',
+                other_display = other_tasks[['ticket_id', 'title', 'assignee', 'category', 'issue_type', 'sp', 'actual_sp', 'status', 'start_date', 'end_date',
                                               'backend_assignee', 'frontend_assignee', 'qa_assignee',
                                               'backend_sp', 'frontend_sp', 'qa_sp',
                                               'backend_start_date', 'backend_end_date',
@@ -449,6 +454,7 @@ else:
                     'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
                     'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
                     'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
+                    'issue_type': st.column_config.TextColumn('Type', width='small', disabled=True),
                     'assignee': st.column_config.TextColumn('Assignee', width='small', disabled=True),
                     'category': st.column_config.TextColumn('Category', width='small', disabled=True),
                     'status': st.column_config.TextColumn('Status', width='small', disabled=True),
@@ -513,7 +519,7 @@ else:
                 filtered_tasks = filtered_tasks[filtered_tasks['title'].str.contains(title_search.strip(), case=False, na=False)]
 
             # Reorder columns for better visibility
-            tasks_display = filtered_tasks[['ticket_id', 'title', 'assignee', 'category',
+            tasks_display = filtered_tasks[['ticket_id', 'title', 'assignee', 'category', 'issue_type',
                                              'status', 'backend_status', 'frontend_status', 'qa_status',
                                              'sp', 'backend_sp', 'frontend_sp', 'qa_sp', 'actual_sp',
                                              'start_date', 'end_date',
@@ -581,6 +587,7 @@ else:
                 'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
                 'ticket_id': st.column_config.TextColumn('Ticket', width='small'),
                 'title': st.column_config.TextColumn('Title', width='medium'),
+                'issue_type': st.column_config.TextColumn('Type', width='small', disabled=True),
                 'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
                 'category': st.column_config.SelectboxColumn('Category', options=['New Work', 'Spillover', 'Bug Fix', 'Adhoc'], width='small'),
                 'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
@@ -623,7 +630,7 @@ else:
                 hide_index=True,
                 num_rows="dynamic",
                 use_container_width=True,
-                disabled=['sprint', 'ticket_id', 'title', 'category', 'actual_sp'],
+                disabled=['sprint', 'ticket_id', 'title', 'issue_type', 'category', 'actual_sp'],
                 on_change=_auto_save,
                 # height=len(tasks_display),
             )

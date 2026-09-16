@@ -72,51 +72,66 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
 
     added = 0
     skipped = 0
+    errors = []
 
     for issue in issues:
-        parsed = parse_issue(issue, base_url, story_points_field=sp_field)
-        jira_key = parsed["jira_key"]
+        try:
+            parsed = parse_issue(issue, base_url, story_points_field=sp_field)
+            jira_key = parsed["jira_key"]
 
-        if jira_key in existing_keys:
-            skipped += 1
+            if jira_key in existing_keys:
+                skipped += 1
+                _fetch_and_cache_comments(sprint_id, jira_key, jira_key)
+                continue
+
+            # Match assignee by email to sprint manager user
+            matched_name = _match_assignee_by_email(parsed.get("assignee_email"))
+            assignee = matched_name if matched_name else parsed["assignee"]
+
+            issue_type = parsed.get("issue_type", "")
+            parent_key = parsed.get("parent_key", "")
+            is_epic = issue_type.lower() == "epic"
+
+            if is_epic:
+                backend_assignee = frontend_assignee = qa_assignee = None
+            else:
+                backend_assignee = assign_round_robin("backend", team_df, sprint_id)
+                frontend_assignee = assign_round_robin("frontend", team_df, sprint_id)
+                qa_assignee = assign_round_robin("qa", team_df, sprint_id)
+
+            db['backlog'].insert_one({
+                "team_id": str(tid),
+                "sprint_id": str(sprint_id),
+                "ticket_id": jira_key,
+                "title": parsed["title"],
+                "assignee": assignee,
+                "role": "",
+                "category": parsed["category"],
+                "issue_type": issue_type,
+                "sp": parsed["sp"],
+                "actual_sp": 0.0,
+                "status": "Todo",
+                "start_date": None,
+                "end_date": None,
+                "jira_key": jira_key,
+                "jira_url": parsed["jira_url"],
+                "jira_status": parsed["jira_status"],
+                "synced_from_jira": True,
+                "jira_comments": [],
+                "local_comments": [],
+                "backend_assignee": backend_assignee,
+                "frontend_assignee": frontend_assignee,
+                "qa_assignee": qa_assignee,
+                "jira_parent_key": parent_key,
+            })
+            added += 1
+            existing_keys.add(jira_key)
+
             _fetch_and_cache_comments(sprint_id, jira_key, jira_key)
-            continue
 
-        # Match assignee by email to sprint manager user
-        matched_name = _match_assignee_by_email(parsed.get("assignee_email"))
-        assignee = matched_name if matched_name else parsed["assignee"]
-
-        backend_assignee = assign_round_robin("backend", team_df, sprint_id)
-        frontend_assignee = assign_round_robin("frontend", team_df, sprint_id)
-        qa_assignee = assign_round_robin("qa", team_df, sprint_id)
-
-        db['backlog'].insert_one({
-            "team_id": str(tid),
-            "sprint_id": str(sprint_id),
-            "ticket_id": jira_key,
-            "title": parsed["title"],
-            "assignee": assignee,
-            "role": "",
-            "category": parsed["category"],
-            "sp": parsed["sp"],
-            "actual_sp": 0.0,
-            "status": "Todo",
-            "start_date": None,
-            "end_date": None,
-            "jira_key": jira_key,
-            "jira_url": parsed["jira_url"],
-            "jira_status": parsed["jira_status"],
-            "synced_from_jira": True,
-            "jira_comments": [],
-            "local_comments": [],
-            "backend_assignee": backend_assignee,
-            "frontend_assignee": frontend_assignee,
-            "qa_assignee": qa_assignee,
-        })
-        added += 1
-        existing_keys.add(jira_key)
-
-        _fetch_and_cache_comments(sprint_id, jira_key, jira_key)
+        except Exception as e:
+            jira_key = issue.get("key", "unknown")
+            errors.append(f"{jira_key}: {e}")
 
     db['sprints'].update_one(
         {"_id": __import__('bson').ObjectId(sprint_id)},
@@ -127,4 +142,4 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
         }}
     )
 
-    return {"added": added, "skipped": skipped, "total_jira": len(issues)}
+    return {"added": added, "skipped": skipped, "total_jira": len(issues), "errors": errors}

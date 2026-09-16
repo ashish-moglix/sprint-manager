@@ -240,7 +240,7 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
     has_jira_col = "jira_url" in df.columns and df["jira_url"].notna().any()
 
     # Select columns to display (must include 'id' for mapping back to original task)
-    cols = ["id", "ticket_id", "title", "category", "assignee", "backend_assignee", "frontend_assignee", "qa_assignee",
+    cols = ["id", "ticket_id", "title", "category", "issue_type", "assignee", "backend_assignee", "frontend_assignee", "qa_assignee",
             "status", "backend_status", "frontend_status", "qa_status",
             "sp", "backend_sp", "frontend_sp", "qa_sp",
             "start_date", "end_date",
@@ -275,6 +275,7 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
         "completion": st.column_config.TextColumn("Progress", width="small", disabled=True),
         "ticket_id": st.column_config.TextColumn("Ticket", width="small", disabled=True),
         "title": st.column_config.TextColumn("Title", width="medium", disabled=True),
+        "issue_type": st.column_config.TextColumn("Type", width="small", disabled=True),
         "category": st.column_config.SelectboxColumn("Category", options=["New Work", "Spillover", "Bug Fix", "Adhoc"], width="small"),
         "assignee": st.column_config.SelectboxColumn("Assignee", options=[""] + team_names, width="small"),
         "backend_assignee": st.column_config.SelectboxColumn("Backend", options=["NA"] + team_names, width="small"),

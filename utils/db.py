@@ -206,7 +206,8 @@ _round_robin_counters = {}
 def assign_round_robin(role, team_df, sprint_id=None):
     """Assign a team member for a given role using load-balanced round-robin.
 
-    Tracks assignment counts per member across calls to ensure fair distribution.
+    Counters are persisted in MongoDB so distribution stays fair across
+    process restarts and multiple sync runs on the same sprint.
     Returns member name or None if no matching member found.
     """
     members = team_df[team_df['role'].str.lower() == role.lower()]['name'].tolist()
@@ -214,18 +215,42 @@ def assign_round_robin(role, team_df, sprint_id=None):
         return None
 
     key = f"{sprint_id}_{role}" if sprint_id else role
-    if key not in _round_robin_counters:
-        _round_robin_counters[key] = {m: 0 for m in members}
+    tid = get_current_team_id()
 
-    counter = _round_robin_counters[key]
-    for m in members:
-        if m not in counter:
-            counter[m] = 0
+    try:
+        db = get_mongo_db()
+        doc = db['rr_counters'].find_one({"team_id": str(tid), "key": key})
+        if doc:
+            counter = doc.get("counts", {})
+        else:
+            counter = {}
 
-    min_count = min(counter[m] for m in members)
-    next_member = next(m for m in members if counter[m] == min_count)
-    counter[next_member] += 1
-    return next_member
+        for m in members:
+            if m not in counter:
+                counter[m] = 0
+
+        min_count = min(counter[m] for m in members)
+        next_member = next(m for m in members if counter[m] == min_count)
+        counter[next_member] += 1
+
+        db['rr_counters'].update_one(
+            {"team_id": str(tid), "key": key},
+            {"$set": {"counts": counter}},
+            upsert=True,
+        )
+        return next_member
+    except Exception:
+        # Fall back to in-memory counter so sync never fails due to DB issues
+        if key not in _round_robin_counters:
+            _round_robin_counters[key] = {m: 0 for m in members}
+        counter = _round_robin_counters[key]
+        for m in members:
+            if m not in counter:
+                counter[m] = 0
+        min_count = min(counter[m] for m in members)
+        next_member = next(m for m in members if counter[m] == min_count)
+        counter[next_member] += 1
+        return next_member
 
 def get_leaves(sprint_id):
     """Load leaves related to a specific sprint for the active tenant team."""
@@ -316,7 +341,7 @@ def get_backlog(sprint_id):
     tid = get_current_team_id()
     cursor = db['backlog'].find({"team_id": str(tid), "sprint_id": str(sprint_id)})
     df = pd.DataFrame(list(cursor))
-    expected_cols = ['id', 'sprint_id', 'ticket_id', 'title', 'assignee', 'role', 'category', 'sp', 'actual_sp', 'status', 'start_date', 'end_date', 'team_id',
+    expected_cols = ['id', 'sprint_id', 'ticket_id', 'title', 'assignee', 'role', 'category', 'issue_type', 'sp', 'actual_sp', 'status', 'start_date', 'end_date', 'team_id',
                     'jira_key', 'jira_url', 'jira_status', 'jira_push_status', 'synced_from_jira', 'jira_comments', 'local_comments',
                     'backend_assignee', 'frontend_assignee', 'qa_assignee',
                     'backend_sp', 'frontend_sp', 'qa_sp',
