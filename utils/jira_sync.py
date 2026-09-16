@@ -33,11 +33,34 @@ def _match_assignee_by_email(assignee_email):
 
 
 def _fetch_and_cache_comments(sprint_id, ticket_id, jira_key):
-    """Fetch JIRA comments and cache them locally."""
+    """Fetch JIRA comments and cache them locally, skipping ones that were pushed from here."""
     try:
         raw_comments = get_comments(jira_key)
         parsed = [parse_comment(c) for c in raw_comments]
-        update_ticket_jira_comments(str(sprint_id), ticket_id, parsed)
+
+        db = get_mongo_db()
+        tid = get_current_team_id()
+        ticket = db['backlog'].find_one({
+            "team_id": str(tid),
+            "sprint_id": str(sprint_id),
+            "ticket_id": ticket_id
+        })
+        synced_local_bodies = set()
+        if ticket:
+            for c in ticket.get("local_comments", []):
+                if c.get("synced"):
+                    synced_local_bodies.add(c.get("body", "").strip())
+
+        filtered = []
+        for c in parsed:
+            body = c.get("body", "")
+            if "— (via Agile Portal)" in body:
+                local_part = body.split("— (via Agile Portal)")[0].strip()
+                if local_part in synced_local_bodies:
+                    continue
+            filtered.append(c)
+
+        update_ticket_jira_comments(str(sprint_id), ticket_id, filtered)
     except Exception:
         pass
 
@@ -69,6 +92,7 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
         "synced_from_jira": True
     })
     existing_keys = {t["jira_key"] for t in existing if t.get("jira_key")}
+    print(f"[SYNC DEBUG] team_id={tid}, sprint_id={sprint_id}, existing_keys count={len(existing_keys)}")
 
     added = 0
     skipped = 0
@@ -82,6 +106,22 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
             if jira_key in existing_keys:
                 skipped += 1
                 _fetch_and_cache_comments(sprint_id, jira_key, jira_key)
+                new_desc = parsed.get("description", "")
+                result = db['backlog'].update_one(
+                    {"team_id": str(tid), "sprint_id": str(sprint_id), "jira_key": jira_key},
+                    {"$set": {
+                        "title": parsed["title"],
+                        "description": new_desc,
+                        "jira_status": parsed["jira_status"],
+                        "sp": parsed["sp"],
+                        "issue_type": parsed.get("issue_type", ""),
+                    }}
+                )
+                existing_doc = db['backlog'].find_one(
+                    {"team_id": str(tid), "sprint_id": str(sprint_id), "jira_key": jira_key},
+                    {"description": 1}
+                )
+                print(f"[SYNC DEBUG] Updated {jira_key}: matched={result.matched_count}, modified={result.modified_count}, desc_len={len(new_desc)}, stored_desc={existing_doc.get('description')!r}")
                 continue
 
             # Match assignee by email to sprint manager user

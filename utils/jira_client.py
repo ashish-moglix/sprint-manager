@@ -143,7 +143,7 @@ def get_issues_by_sprint(board_id, sprint_id, story_points_field="customfield_10
 
 def _get_issues_by_sprint_agile(board_id, sprint_id, story_points_field, extra_fields=""):
     """Fetch top-level issues from Agile REST endpoint (no subtasks by default)."""
-    fields = f"summary,assignee,status,issuetype,timetracking,{story_points_field}"
+    fields = f"summary,description,assignee,status,issuetype,timetracking,{story_points_field}"
     if extra_fields:
         fields += f",{extra_fields}"
     url = f"{_base_url()}/rest/agile/1.0/board/{board_id}/sprint/{sprint_id}/issue"
@@ -217,6 +217,32 @@ def add_comment(issue_key, comment_body):
 
 # --- PARSING ---
 
+def _extract_text_from_adf(node):
+    """Recursively extract plain text from Atlassian Document Format (ADF)."""
+    if isinstance(node, str):
+        return node
+    if not isinstance(node, dict):
+        return ""
+    texts = []
+    if node.get("type") == "text":
+        return node.get("text", "")
+    for child in node.get("content", []):
+        texts.append(_extract_text_from_adf(child))
+    separator = "\n" if node.get("type") in ("paragraph", "heading", "blockquote", "listItem") else ""
+    return separator.join(t for t in texts if t)
+
+
+def _parse_description(raw):
+    """Parse description from JIRA - handles both plain string and ADF dict."""
+    if not raw:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict):
+        return _extract_text_from_adf(raw)
+    return str(raw)
+
+
 def parse_issue(issue, base_url, story_points_field="customfield_10119"):
     """Parse a JIRA issue into a flat dict for our backlog schema."""
     fields = issue.get("fields", {})
@@ -239,7 +265,7 @@ def parse_issue(issue, base_url, story_points_field="customfield_10119"):
         "jira_key": issue.get("key"),
         "jira_url": f"{base_url}/browse/{issue.get('key')}",
         "title": fields.get("summary", ""),
-        "description": fields.get("description", "") or "",
+        "description": _parse_description(fields.get("description")),
         "assignee": assignee.get("displayName", ""),
         "assignee_email": assignee.get("emailAddress", ""),
         "assignee_account_id": assignee.get("accountId", ""),

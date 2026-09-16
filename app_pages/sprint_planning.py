@@ -294,10 +294,15 @@ else:
             col_config = {'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True)}
             if has_jira_col:
                 col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
-            # Column visibility filter for read-only backlog
+            base_url = st.context.headers.get("Host", "localhost:8501")
+            scheme = "https" if st.context.headers.get("X-Forwarded-Proto", "http") == "https" else "http"
+            tasks_display['Details'] = tasks_display['ticket_id'].apply(
+                lambda tid: f"{scheme}://{base_url}/ticket_details?ticket={tid}&sprint={selected_s_id}"
+            )
             bk_cols = [c for c in tasks_display.columns if c not in ('id', '_id')]
             visible_bk = _column_filter_ui("backlog_readonly", bk_cols)
-            bk_display = tasks_display[visible_bk]
+            bk_display = tasks_display[visible_bk].copy()
+            col_config['Details'] = st.column_config.LinkColumn('Details', display_text='View', width='small')
             st.markdown(_freeze_columns_js("backlog_readonly", freeze_n=4), unsafe_allow_html=True)
             st.dataframe(bk_display.set_index('ticket_id'), use_container_width=True, column_config=col_config, key="backlog_readonly")
 
@@ -326,6 +331,12 @@ else:
                 if has_jira_col:
                     my_tasks_display['jira_url'] = my_tasks['jira_url']
                 my_tasks_display['sprint'] = selected_sprint_name
+
+                base_url = st.context.headers.get("Host", "localhost:8501")
+                scheme = "https" if st.context.headers.get("X-Forwarded-Proto", "http") == "https" else "http"
+                my_tasks_display['Details'] = my_tasks_display['ticket_id'].apply(
+                    lambda tid: f"{scheme}://{base_url}/ticket_details?ticket={tid}&sprint={selected_s_id}"
+                )
                 my_tasks_display['sp'] = my_tasks_display.apply(compute_sp, axis=1)
                 my_tasks_display['actual_sp'] = my_tasks_display.apply(compute_actual_sp, axis=1)
                 for col in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
@@ -364,6 +375,7 @@ else:
                 }
                 if has_jira_col:
                     my_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+                my_col_config['Details'] = st.column_config.LinkColumn('Details', width='small', display_text='View')
 
                 # Column visibility filter for my tasks editor
                 my_cols = [c for c in my_tasks_display.columns if c not in ('id', '_id')]
@@ -445,6 +457,12 @@ else:
                 if has_jira_col:
                     other_display['jira_url'] = other_tasks['jira_url']
                 other_display['sprint'] = selected_sprint_name
+
+                base_url = st.context.headers.get("Host", "localhost:8501")
+                scheme = "https" if st.context.headers.get("X-Forwarded-Proto", "http") == "https" else "http"
+                other_display['Details'] = other_display['ticket_id'].apply(
+                    lambda tid: f"{scheme}://{base_url}/ticket_details?ticket={tid}&sprint={selected_s_id}"
+                )
                 for col in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
                             'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
                     if col in other_display.columns:
@@ -480,6 +498,7 @@ else:
                 }
                 if has_jira_col:
                     other_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
+                other_col_config['Details'] = st.column_config.LinkColumn('Details', width='small', display_text='View')
                 # Column visibility filter for team backlog read-only
                 other_cols = [c for c in other_display.columns if c not in ('id', '_id')]
                 visible_other = _column_filter_ui("team_backlog_readonly", other_cols)
@@ -531,6 +550,12 @@ else:
                 tasks_display['jira_url'] = filtered_tasks['jira_url']
                 tasks_display['jira_push_status'] = filtered_tasks.get('jira_push_status', None)
             tasks_display['sprint'] = selected_sprint_name
+
+            base_url = st.context.headers.get("Host", "localhost:8501")
+            scheme = "https" if st.context.headers.get("X-Forwarded-Proto", "http") == "https" else "http"
+            tasks_display['Details'] = tasks_display['ticket_id'].apply(
+                lambda tid: f"{scheme}://{base_url}/ticket_details?ticket={tid}&sprint={selected_s_id}"
+            )
             for _dc in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
                         'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
                 if _dc in tasks_display.columns:
@@ -616,6 +641,7 @@ else:
             if has_jira_col:
                 admin_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
                 admin_col_config['jira_push_status'] = st.column_config.TextColumn('Sync', width='small', disabled=True)
+            admin_col_config['Details'] = st.column_config.LinkColumn('Details', width='small', display_text='View')
 
             # Column visibility filter for admin task editor
             admin_cols = [c for c in tasks_display.columns if c not in ('id', '_id')]

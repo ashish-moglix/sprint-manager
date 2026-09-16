@@ -259,6 +259,13 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
     # Add completion indicators column
     view_df['completion'] = view_df.apply(_get_completion_indicators, axis=1)
 
+    # Add Details link column
+    base_url = st.context.headers.get("Host", "localhost:8501")
+    scheme = "https" if st.context.headers.get("X-Forwarded-Proto", "http") == "https" else "http"
+    view_df['Details'] = view_df['ticket_id'].apply(
+        lambda tid: f"{scheme}://{base_url}/ticket_details?ticket={tid}&sprint={s_id}"
+    )
+
     # Convert date columns
     for col in available:
         if "date" in col:
@@ -302,6 +309,7 @@ def _render_editable_task_table(df, dev_name=None, tab_key=""):
 
     if has_jira_col:
         col_config["jira_url"] = st.column_config.LinkColumn("JIRA", width="small", display_text="Open")
+    col_config["Details"] = st.column_config.LinkColumn("Details", width="small", display_text="View")
 
     # Store view_df mapping in session state for the auto-save callback
     st.session_state[f"{tab_key}_view_df"] = view_df
