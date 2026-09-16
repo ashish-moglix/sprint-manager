@@ -104,6 +104,7 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
                 "sprint_id": str(sprint_id),
                 "ticket_id": jira_key,
                 "title": parsed["title"],
+                "description": parsed.get("description", ""),
                 "assignee": assignee,
                 "role": "",
                 "category": parsed["category"],

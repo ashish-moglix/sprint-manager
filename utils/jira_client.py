@@ -117,7 +117,7 @@ def get_issues_by_sprint(board_id, sprint_id, story_points_field="customfield_10
     each issue's 'subtasks' field and fetches them individually.
     This avoids the unreliable /rest/api/2/search endpoint.
     """
-    fields = f"summary,assignee,status,issuetype,timetracking,subtasks,{story_points_field}"
+    fields = f"summary,description,assignee,status,issuetype,timetracking,subtasks,{story_points_field}"
     top_level = _get_issues_by_sprint_agile(board_id, sprint_id, story_points_field, extra_fields="subtasks")
 
     all_issues = list(top_level)
@@ -156,7 +156,7 @@ def _get_issues_by_sprint_agile(board_id, sprint_id, story_points_field, extra_f
 def get_issue_by_key(issue_key, story_points_field="customfield_10119"):
     """Fetch a single issue by key including its subtask/parent fields."""
     url = f"{_base_url()}/rest/api/2/issue/{issue_key}"
-    params = {"fields": f"summary,assignee,status,issuetype,timetracking,parent,subtasks,{story_points_field}"}
+    params = {"fields": f"summary,description,assignee,status,issuetype,timetracking,parent,subtasks,{story_points_field}"}
     resp = requests.get(url, auth=_auth(), headers=_headers(), params=params, timeout=30)
     resp.raise_for_status()
     return resp.json()
@@ -239,6 +239,7 @@ def parse_issue(issue, base_url, story_points_field="customfield_10119"):
         "jira_key": issue.get("key"),
         "jira_url": f"{base_url}/browse/{issue.get('key')}",
         "title": fields.get("summary", ""),
+        "description": fields.get("description", "") or "",
         "assignee": assignee.get("displayName", ""),
         "assignee_email": assignee.get("emailAddress", ""),
         "assignee_account_id": assignee.get("accountId", ""),
