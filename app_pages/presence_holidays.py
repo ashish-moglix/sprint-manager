@@ -17,45 +17,42 @@ if sprints_df.empty or team_df.empty:
     st.info("Create a sprint and add team members first.", icon=":material/info:")
 else:
     team_names = team_df['name'].tolist()
-    
-    # Active sprint details for validation
-    active = sprints_df[sprints_df['status'] == 'Active']
-    active_sprint_name = active.iloc[0]['name'] if not active.empty else None
-    
+
     # Sprint Selector at the top
     sprint_names = sprints_df['name'].tolist()
+    active = sprints_df[sprints_df['status'] == 'Active']
+    active_sprint_name = active.iloc[0]['name'] if not active.empty else None
     default_index = sprint_names.index(active_sprint_name) if active_sprint_name in sprint_names else 0
     selected_sprint_name = st.selectbox("Select Sprint to View Presence & Holidays", sprint_names, index=default_index)
-    is_selected_active = (selected_sprint_name == active_sprint_name)
+
+    selected_s_row = sprints_df[sprints_df['name'] == selected_sprint_name].iloc[0]
+    selected_s_id = selected_s_row['id']
 
     t_abs = st.tabs(["Sprint leaves", "Sprint holidays"])
     user_role = st.session_state.user.get('user_role', 'Team User')
 
     # Sprint leaves tab
     with t_abs[0]:
-        if user_role != 'Team User' and is_selected_active:
+        if user_role != 'Team User':
             with st.form("sl_form"):
                 st.subheader("Add new leave")
                 ca1, ca2 = st.columns(2)
                 with ca1:
-                    l_sprint = st.selectbox("Sprint", [active_sprint_name], disabled=True, key="leave_sprint_select")
+                    l_sprint = st.selectbox("Sprint", [selected_sprint_name], disabled=True, key="leave_sprint_select")
                 with ca2:
                     l_name = st.selectbox("Member", team_names, key="leave_member_select")
                 l_range = st.date_input("Date range", value=[], key="leave_range_picker")
                 l_type = st.selectbox("Type", ["Planned", "Sick", "Emergency"], key="leave_type_select")
-                
+
                 if st.form_submit_button("Add leave", type="primary"):
                     if len(l_range) == 2:
-                        s_id = active.iloc[0]['id']
                         days = get_workdays(l_range[0], l_range[1])
-                        add_leave(l_name, l_type, l_range[0], l_range[1], days, s_id)
-                        st.success(f"Leave added for {l_name} in active sprint {active_sprint_name}.")
+                        add_leave(l_name, l_type, l_range[0], l_range[1], days, selected_s_id)
+                        st.success(f"Leave added for {l_name} in sprint {selected_sprint_name}.")
                         st.rerun()
                     else:
                         st.error("Please select both a start and an end date for the leave range.", icon=":material/error:")
             st.divider()
-        elif user_role != 'Team User' and not is_selected_active:
-            st.info("Creating new leaves is only allowed for the active sprint.", icon=":material/info:")
         else:
             st.info("Leaves are managed by Team Admins.", icon=":material/info:")
 
@@ -71,7 +68,7 @@ else:
             leaves_display['end_date'] = pd.to_datetime(leaves_display['end_date']).dt.date
             leaves_display = leaves_display.set_index('id')
 
-            if user_role != 'Team User' and is_selected_active:
+            if user_role != 'Team User':
                 f1, f2 = st.columns([2, 3])
                 with f1:
                     member_filter = st.selectbox(
@@ -158,24 +155,21 @@ else:
 
     # Sprint holidays tab
     with t_abs[1]:
-        if user_role != 'Team User' and is_selected_active:
+        if user_role != 'Team User':
             with st.form("sh_form"):
                 st.subheader("Add new holiday")
                 ch1, ch2 = st.columns(2)
                 with ch1:
-                    h_sprint = st.selectbox("Sprint", [active_sprint_name], disabled=True, key="holiday_sprint_select")
+                    h_sprint = st.selectbox("Sprint", [selected_sprint_name], disabled=True, key="holiday_sprint_select")
                 with ch2:
                     h_d = st.date_input("Holiday date", key="holiday_date_picker")
                 h_t = st.text_input("Description", key="holiday_desc_input")
-                
+
                 if st.form_submit_button("Add holiday", type="primary"):
-                    s_id = active.iloc[0]['id']
-                    add_holiday(h_d, h_t, s_id)
-                    st.success(f"Holiday added for active sprint {active_sprint_name}.")
+                    add_holiday(h_d, h_t, selected_s_id)
+                    st.success(f"Holiday added for sprint {selected_sprint_name}.")
                     st.rerun()
             st.divider()
-        elif user_role != 'Team User' and not is_selected_active:
-            st.info("Creating new holidays is only allowed for the active sprint.", icon=":material/info:")
         else:
             st.info("Holidays are managed by Team Admins.", icon=":material/info:")
 
@@ -190,7 +184,7 @@ else:
             hols_display['holiday_date'] = pd.to_datetime(hols_display['holiday_date']).dt.date
             hols_display = hols_display.set_index('id')
 
-            if user_role != 'Team User' and is_selected_active:
+            if user_role != 'Team User':
                 hol_search = st.text_input("Search holidays", placeholder="Type to filter by description...", key="hol_search")
 
                 filtered_hols = hols_data

@@ -152,8 +152,7 @@ if sprints_df.empty:
 else:
     active = sprints_df[sprints_df['status'] == 'Active']
     active_sprint_name = active.iloc[0]['name'] if not active.empty else None
-    active_s_id = active.iloc[0]['id'] if not active.empty else None
-    
+
     team_df = get_team()
     user_role = st.session_state.user.get('user_role', 'Team User')
     user_name = st.session_state.user.get('name')
@@ -165,7 +164,6 @@ else:
     selected_sprint_name = st.selectbox("Select Sprint to View Backlog", sprint_names, index=default_index)
     selected_s_row = sprints_df[sprints_df['name'] == selected_sprint_name].iloc[0]
     selected_s_id = selected_s_row['id']
-    is_selected_active = (selected_sprint_name == active_sprint_name)
 
     # JIRA Sync Section
     jira_cfg = get_current_team_jira_config()
@@ -196,69 +194,66 @@ else:
             with c_info:
                 st.caption(f"Board ID: {jira_cfg['board_id']} | Syncs tickets from JIRA sprint '{selected_sprint_name}'")
 
-    # 1. Add New Ticket Section (Only for active sprint, only if active sprint exists, and only for non-Team Users)
+    # 1. Add New Ticket Section (for non-Team Users, into the selected sprint)
     if not is_team_user:
-        if not active.empty:
-            with st.container(border=True):
-                st.subheader(f"Add new ticket (Adding to active sprint: {active_sprint_name})")
-                
-                # User input fields
-                f1, f2, f3 = st.columns([1, 2, 1])
-                with f1:
-                    tid = st.text_input("Ticket ID", placeholder="e.g. PROJ-123")
-                with f2:
-                    title = st.text_input("Title", placeholder="Short task description")
-                with f3:
-                    sp = st.number_input("Est. SP", min_value=0.0, value=2.0, step=0.5)
+        with st.container(border=True):
+            st.subheader(f"Add new ticket (Adding to: {selected_sprint_name})")
 
-                f4, f5 = st.columns(2)
-                with f4:
-                    owner = st.selectbox("Assignee", team_df['name'].tolist())
-                with f5:
-                    cat = st.selectbox("Category", ["New Work", "Spillover", "Bug Fix", "Adhoc"])
+            # User input fields
+            f1, f2, f3 = st.columns([1, 2, 1])
+            with f1:
+                tid = st.text_input("Ticket ID", placeholder="e.g. PROJ-123")
+            with f2:
+                title = st.text_input("Title", placeholder="Short task description")
+            with f3:
+                sp = st.number_input("Est. SP", min_value=0.0, value=2.0, step=0.5)
 
-                # Calculate capacity details for selected dev using active sprint data
-                dev_row = team_df[team_df['name'] == owner].iloc[0]
-                s_start_dt = pd.to_datetime(active.iloc[0]['start_date'], format='mixed')
-                s_end_dt = pd.to_datetime(active.iloc[0]['end_date'], format='mixed')
-                wk_days = get_workdays(s_start_dt.date(), s_end_dt.date())
+            f4, f5 = st.columns(2)
+            with f4:
+                owner = st.selectbox("Assignee", team_df['name'].tolist())
+            with f5:
+                cat = st.selectbox("Category", ["New Work", "Spillover", "Bug Fix", "Adhoc"])
 
-                hols_in_sprint = len(get_holidays(active_s_id, s_start_dt.date(), s_end_dt.date()))
-                leaves_df = get_leaves(active_s_id)
-                dev_leaves_sum = leaves_df[(leaves_df['name'] == owner) & (leaves_df['sprint_id'] == active_s_id)]['total_days'].sum()
+            # Calculate capacity details for selected dev using the selected sprint
+            dev_row = team_df[team_df['name'] == owner].iloc[0]
+            s_start_dt = pd.to_datetime(selected_s_row['start_date'], format='mixed')
+            s_end_dt = pd.to_datetime(selected_s_row['end_date'], format='mixed')
+            wk_days = get_workdays(s_start_dt.date(), s_end_dt.date())
 
-                eff_days = max(wk_days - hols_in_sprint - dev_leaves_sum, 0)
-                dev_role = dev_row.get('role', '')
-                daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev_row['daily_sp']
-                total_dev_sp = eff_days * daily_sp
-                
-                # Buffer calculation from individual developer parameters
-                dev_bug_p = dev_row.get('bug_p', 15.0)
-                dev_adhoc_p = dev_row.get('adhoc_p', 10.0)
-                dev_cere_p = dev_row.get('ceremony_p', 10.0)
-                
-                dev_buffers = total_dev_sp * (dev_bug_p + dev_adhoc_p + dev_cere_p) / 100
-                dev_avail = total_dev_sp - dev_buffers
+            hols_in_sprint = len(get_holidays(selected_s_id, s_start_dt.date(), s_end_dt.date()))
+            leaves_df = get_leaves(selected_s_id)
+            dev_leaves_sum = leaves_df[(leaves_df['name'] == owner) & (leaves_df['sprint_id'] == selected_s_id)]['total_days'].sum()
 
-                backlog_df = get_backlog(active_s_id)
-                dev_alloced = get_dev_allocated_sp(owner, backlog_df)
-                dev_remaining = dev_avail - dev_alloced
+            eff_days = max(wk_days - hols_in_sprint - dev_leaves_sum, 0)
+            dev_role = dev_row.get('role', '')
+            daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev_row['daily_sp']
+            total_dev_sp = eff_days * daily_sp
 
-                # Live metric cards
-                m1, m2, m3, m4, m5 = st.columns(5)
-                m1.metric("Gross Capacity", f"{total_dev_sp:.1f}")
-                m2.metric("Buffers", f"{dev_buffers:.1f}")
-                m3.metric("Available", f"{dev_avail:.1f}")
-                m4.metric("Allocated", f"{dev_alloced:.1f}")
-                m5.metric("Remaining", f"{dev_remaining:.1f}", delta=f"{dev_remaining:+.1f}")
+            # Buffer calculation from individual developer parameters
+            dev_bug_p = dev_row.get('bug_p', 15.0)
+            dev_adhoc_p = dev_row.get('adhoc_p', 10.0)
+            dev_cere_p = dev_row.get('ceremony_p', 10.0)
 
-                if st.button("Commit ticket", type="primary"):
-                    role = team_df[team_df['name'] == owner]['role'].values[0]
-                    add_ticket(active_s_id, tid, title, owner, role, cat, sp)
-                    st.success(f"Ticket {tid} added to Active sprint {active_sprint_name}!")
-                    st.rerun()
-        else:
-            st.warning("No sprint is currently active. Sprints must be active to commit new tasks.", icon=":material/warning:")
+            dev_buffers = total_dev_sp * (dev_bug_p + dev_adhoc_p + dev_cere_p) / 100
+            dev_avail = total_dev_sp - dev_buffers
+
+            backlog_df = get_backlog(selected_s_id)
+            dev_alloced = get_dev_allocated_sp(owner, backlog_df)
+            dev_remaining = dev_avail - dev_alloced
+
+            # Live metric cards
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Gross Capacity", f"{total_dev_sp:.1f}")
+            m2.metric("Buffers", f"{dev_buffers:.1f}")
+            m3.metric("Available", f"{dev_avail:.1f}")
+            m4.metric("Allocated", f"{dev_alloced:.1f}")
+            m5.metric("Remaining", f"{dev_remaining:.1f}", delta=f"{dev_remaining:+.1f}")
+
+            if st.button("Commit ticket", type="primary"):
+                role = team_df[team_df['name'] == owner]['role'].values[0]
+                add_ticket(selected_s_id, tid, title, owner, role, cat, sp)
+                st.success(f"Ticket {tid} added to sprint {selected_sprint_name}!")
+                st.rerun()
     else:
         st.info(f"Welcome {user_name}! You can view the backlog and update your own tasks in the active sprint.")
 
@@ -267,47 +262,8 @@ else:
     has_jira_col = "jira_url" in tasks.columns and tasks["jira_url"].notna().any()
 
     if not tasks.empty:
-        if not is_selected_active:
-            st.subheader(f"Backlog for '{selected_sprint_name}' (Read-Only - {selected_s_row['status']})")
-            tasks_display = tasks[['ticket_id', 'title', 'assignee', 'category', 'issue_type', 'sp', 'actual_sp', 'status', 'start_date', 'end_date',
-                                   'backend_assignee', 'frontend_assignee', 'qa_assignee',
-                                   'backend_sp', 'frontend_sp', 'qa_sp',
-                                   'backend_start_date', 'backend_end_date',
-                                   'frontend_start_date', 'frontend_end_date',
-                                   'qa_start_date', 'qa_end_date',
-                                   'backend_status', 'frontend_status', 'qa_status']].copy()
-            # Calculate total dev SP and estimated SP
-            tasks_display['backend_sp'] = tasks_display['backend_sp'].fillna(0).astype(float)
-            tasks_display['frontend_sp'] = tasks_display['frontend_sp'].fillna(0).astype(float)
-            tasks_display['qa_sp'] = tasks_display['qa_sp'].fillna(0).astype(float)
-            tasks_display['total_dev_sp'] = tasks_display['backend_sp'] + tasks_display['frontend_sp']
-            tasks_display['est_sp'] = tasks_display['total_dev_sp'] + tasks_display['qa_sp']
-
-            if has_jira_col:
-                tasks_display['jira_url'] = tasks['jira_url']
-            tasks_display['sprint'] = selected_sprint_name
-            for col in ['start_date', 'end_date', 'backend_start_date', 'backend_end_date',
-                        'frontend_start_date', 'frontend_end_date', 'qa_start_date', 'qa_end_date']:
-                if col in tasks_display.columns:
-                    tasks_display[col] = pd.to_datetime(tasks_display[col], format='mixed', errors='coerce').dt.date
-            tasks_display['actual_sp'] = tasks_display['actual_sp'].fillna(0).astype(float)
-            col_config = {'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True)}
-            if has_jira_col:
-                col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
-            base_url = st.context.headers.get("Host", "localhost:8501")
-            scheme = "https" if st.context.headers.get("X-Forwarded-Proto", "http") == "https" else "http"
-            tasks_display['Details'] = tasks_display['ticket_id'].apply(
-                lambda tid: f"{scheme}://{base_url}/ticket_details?ticket={tid}&sprint={selected_s_id}"
-            )
-            bk_cols = [c for c in tasks_display.columns if c not in ('id', '_id')]
-            visible_bk = _column_filter_ui("backlog_readonly", bk_cols)
-            bk_display = tasks_display[visible_bk].copy()
-            col_config['Details'] = st.column_config.LinkColumn('Details', display_text='View', width='small')
-            st.markdown(_freeze_columns_js("backlog_readonly", freeze_n=4), unsafe_allow_html=True)
-            st.dataframe(bk_display.set_index('ticket_id'), use_container_width=True, column_config=col_config, key="backlog_readonly")
-
-        elif is_team_user:
-            # Active Sprint, Team User role -> Can only edit own tasks
+        if is_team_user:
+            # Team User role -> Can only edit own tasks
             my_mask = (
                 (tasks['assignee'] == user_name) |
                 (tasks['backend_assignee'] == user_name) |
@@ -318,7 +274,7 @@ else:
             other_tasks = tasks[~my_mask].copy()
             
             # 1. Show My Assigned Tasks (Editable)
-            st.subheader("My Assigned Tasks (Active Sprint)")
+            st.subheader(f"My Assigned Tasks ({selected_sprint_name})")
             if not my_tasks.empty:
                 my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'assignee', 'backend_assignee', 'frontend_assignee', 'qa_assignee',
                                               'issue_type',
@@ -508,7 +464,7 @@ else:
 
         else:
             # Active Sprint, Scrum Master/Admin/PM role -> Full edit privileges!
-            st.subheader("Task tracker (Active Sprint)")
+            st.subheader(f"Task tracker ({selected_sprint_name})")
 
             f1, f2 = st.columns(2)
             with f1:

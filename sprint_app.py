@@ -251,6 +251,7 @@ else:
             st.Page("app_pages/presence_holidays.py", title="Presence & Holidays", icon=":material/calendar_today:"),
             st.Page("app_pages/team_system_setup.py", title="Team & System Setup", icon=":material/settings:"),
             st.Page("app_pages/sprint_reports.py", title="Sprint Reports", icon=":material/assessment:"),
+            st.Page("app_pages/developer_performance.py", title="Developer Performance", icon=":material/bar_chart:"),
         ])
     pg.run()
 
