@@ -30,6 +30,7 @@ else:
 
     t_abs = st.tabs(["Sprint leaves", "Sprint holidays"])
     user_role = st.session_state.user.get('user_role', 'Team User')
+    user_name = st.session_state.user.get('name')
 
     # Sprint leaves tab
     with t_abs[0]:
@@ -54,7 +55,25 @@ else:
                         st.error("Please select both a start and an end date for the leave range.", icon=":material/error:")
             st.divider()
         else:
-            st.info("Leaves are managed by Team Admins.", icon=":material/info:")
+            with st.form("sl_form_self"):
+                st.subheader("Add your own leave")
+                sf1, sf2 = st.columns(2)
+                with sf1:
+                    l_name_self = st.selectbox("Member", [user_name], disabled=True, key="leave_self_member")
+                with sf2:
+                    l_type_self = st.selectbox("Type", ["Planned", "Sick", "Emergency"], key="leave_self_type")
+                l_range_self = st.date_input("Date range", value=[], key="leave_self_range")
+
+                if st.form_submit_button("Add my leave", type="primary"):
+                    if len(l_range_self) == 2:
+                        days = get_workdays(l_range_self[0], l_range_self[1])
+                        add_leave(user_name, l_type_self, l_range_self[0], l_range_self[1], days, selected_s_id)
+                        st.success(f"Your leave added in sprint {selected_sprint_name}.")
+                        st.rerun()
+                    else:
+                        st.error("Please select both a start and an end date for the leave range.", icon=":material/error:")
+            st.divider()
+            st.caption("You can add your own leaves. You can delete only your own entries — editing other members' leaves is managed by Team Admins.")
 
         st.subheader(f"Leaves for '{selected_sprint_name}'")
         leaves_data = get_leaves_with_sprints()
@@ -149,7 +168,15 @@ else:
                         st.success(f"Deleted {deleted} leave(s).")
                         st.rerun()
             else:
-                st.dataframe(leaves_display[['name', 'sprint', 'reason', 'start_date', 'end_date', 'total_days']], use_container_width=True, hide_index=True)
+                # Team User: show all leaves read-only
+                leaves_display = leaves_data.copy()
+                leaves_display['start_date'] = pd.to_datetime(leaves_display['start_date']).dt.date
+                leaves_display['end_date'] = pd.to_datetime(leaves_display['end_date']).dt.date
+                st.dataframe(
+                    leaves_display[['name', 'sprint', 'reason', 'start_date', 'end_date', 'total_days']],
+                    use_container_width=True,
+                    hide_index=True
+                )
         else:
             st.info(f"No leaves configured for sprint '{selected_sprint_name}'.", icon=":material/info:")
 
