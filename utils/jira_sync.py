@@ -1,4 +1,7 @@
-from utils.db import get_mongo_db, get_current_team_id, update_ticket_jira_comments, get_team, assign_round_robin
+from utils.db import (
+    get_mongo_db, get_current_team_id, update_ticket_jira_comments,
+    get_team, assign_round_robin, get_jira_status_mapping, get_team_jira_sync_settings
+)
 from utils.jira_client import (
     find_sprint_by_name, get_issues_by_sprint, parse_issue, parse_comment,
     get_comments, _base_url, DEFAULT_STORY_POINTS_FIELD
@@ -65,10 +68,67 @@ def _fetch_and_cache_comments(sprint_id, ticket_id, jira_key):
         pass
 
 
+def _split_sp_for_roles(total_sp, has_be, has_fe, has_qa):
+    """Split total SP across roles that have assignees.
+
+    Distributes evenly; remainder goes to the first active role.
+    Each role gets at least 0.5 SP if it has an assignee and total > 0.
+    """
+    active = [r for r, active in [("be", has_be), ("fe", has_fe), ("qa", has_qa)] if active]
+    if not active or total_sp <= 0:
+        return (total_sp if has_be else 0.0, total_sp if has_fe else 0.0, total_sp if has_qa else 0.0)
+
+    per_role = round(total_sp / len(active), 1)
+    remainder = round(total_sp - per_role * len(active), 1)
+
+    be_sp = per_role + remainder if "be" in active else 0.0
+    fe_sp = per_role if "fe" in active else 0.0
+    qa_sp = per_role if "qa" in active else 0.0
+
+    # Ensure each active role gets at least 0.5
+    if has_be and be_sp < 0.5 and total_sp >= 0.5:
+        be_sp = 0.5
+    if has_fe and fe_sp < 0.5 and total_sp >= 0.5:
+        fe_sp = 0.5
+    if has_qa and qa_sp < 0.5 and total_sp >= 0.5:
+        qa_sp = 0.5
+
+    return (be_sp, fe_sp, qa_sp)
+
+
+def _derive_portal_status(jira_status):
+    """Map JIRA status to initial portal status.
+
+    Recognizes common JIRA statuses; defaults to 'Todo' for unknown.
+    """
+    if not jira_status:
+        return "Todo"
+    status_map = {
+        "to do": "Todo",
+        "todo": "Todo",
+        "backlog": "Todo",
+        "open": "Todo",
+        "reopened": "Todo",
+        "in progress": "In Progress",
+        "in review": "In Progress",
+        "in development": "In Progress",
+        "in testing": "In Progress",
+        "qa": "In Progress",
+        "done": "Done",
+        "closed": "Done",
+        "resolved": "Done",
+        "verified": "Done",
+    }
+    return status_map.get(jira_status.strip().lower(), "Todo")
+
+
 def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
     """Sync tickets from JIRA into local backlog.
 
-    Returns dict with counts: {"added": N, "skipped": N, "total_jira": N}
+    Tickets with closed/Done/Resolved JIRA status are skipped based on team config.
+    Initial portal status is derived from JIRA status.
+
+    Returns dict with counts: {"added": N, "skipped": N, "skipped_closed": N, "total_jira": N}
     """
     db = get_mongo_db()
     tid = get_current_team_id()
@@ -76,15 +136,25 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
 
     jira_sprint = find_sprint_by_name(board_id, sprint_name)
     if not jira_sprint:
-        return {"added": 0, "skipped": 0, "total_jira": 0,
+        return {"added": 0, "skipped": 0, "skipped_closed": 0, "total_jira": 0,
                 "error": f"Sprint '{sprint_name}' not found on JIRA board {board_id}"}
 
     jira_sprint_id = jira_sprint.get("id")
     sp_field = get_team_jira_config().get("story_points_field", DEFAULT_STORY_POINTS_FIELD)
 
+    # Get team's skip config
+    team = db['teams'].find_one({"_id": __import__('bson').ObjectId(tid)})
+    skip_closed = team.get("jira_skip_closed_on_sync", True) if team else True
+    mapping_doc = get_jira_status_mapping(str(tid))
+    skip_statuses = set()
+    if mapping_doc and mapping_doc.get("skip_statuses"):
+        skip_statuses = {s.strip().lower() for s in mapping_doc["skip_statuses"] if s.strip()}
+    elif skip_closed:
+        skip_statuses = {"done", "closed", "resolved"}
+
     issues = get_issues_by_sprint(board_id, jira_sprint_id, story_points_field=sp_field)
     if not issues:
-        return {"added": 0, "skipped": 0, "total_jira": 0}
+        return {"added": 0, "skipped": 0, "skipped_closed": 0, "total_jira": 0}
 
     existing = db['backlog'].find({
         "team_id": str(tid),
@@ -96,12 +166,20 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
 
     added = 0
     skipped = 0
+    skipped_closed = 0
     errors = []
 
     for issue in issues:
         try:
             parsed = parse_issue(issue, base_url, story_points_field=sp_field)
             jira_key = parsed["jira_key"]
+            jira_status = parsed.get("jira_status", "")
+
+            # Skip already-closed JIRA tickets
+            if jira_status.strip().lower() in skip_statuses:
+                skipped_closed += 1
+                print(f"[SYNC] Skipping closed ticket {jira_key} (JIRA status: {jira_status})")
+                continue
 
             if jira_key in existing_keys:
                 skipped += 1
@@ -139,6 +217,12 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
                 frontend_assignee = assign_round_robin("frontend", team_df, sprint_id)
                 qa_assignee = assign_round_robin("qa", team_df, sprint_id)
 
+            initial_status = _derive_portal_status(jira_status)
+            total_sp = parsed["sp"]
+            be_sp, fe_sp, qa_sp = _split_sp_for_roles(
+                total_sp, bool(backend_assignee), bool(frontend_assignee), bool(qa_assignee)
+            )
+
             db['backlog'].insert_one({
                 "team_id": str(tid),
                 "sprint_id": str(sprint_id),
@@ -149,21 +233,28 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
                 "role": "",
                 "category": parsed["category"],
                 "issue_type": issue_type,
-                "sp": parsed["sp"],
+                "sp": total_sp,
                 "actual_sp": 0.0,
-                "status": "Todo",
+                "status": initial_status,
                 "start_date": None,
                 "end_date": None,
                 "jira_key": jira_key,
                 "jira_url": parsed["jira_url"],
-                "jira_status": parsed["jira_status"],
+                "jira_status": jira_status,
                 "synced_from_jira": True,
                 "jira_comments": [],
                 "local_comments": [],
                 "backend_assignee": backend_assignee,
                 "frontend_assignee": frontend_assignee,
                 "qa_assignee": qa_assignee,
+                "backend_sp": be_sp,
+                "frontend_sp": fe_sp,
+                "qa_sp": qa_sp,
+                "backend_status": initial_status if backend_assignee else "NA",
+                "frontend_status": initial_status if frontend_assignee else "NA",
+                "qa_status": initial_status if qa_assignee else "NA",
                 "jira_parent_key": parent_key,
+                "jira_status_push_history": [],
             })
             added += 1
             existing_keys.add(jira_key)
@@ -183,4 +274,5 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
         }}
     )
 
-    return {"added": added, "skipped": skipped, "total_jira": len(issues), "errors": errors}
+    return {"added": added, "skipped": skipped, "skipped_closed": skipped_closed,
+            "total_jira": len(issues), "errors": errors}

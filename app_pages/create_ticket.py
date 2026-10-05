@@ -132,11 +132,11 @@ with st.container(border=True):
     daily_sp = 0.0 if dev_role in ["PM", "EM"] else dev_row["daily_sp"]
     total_dev_sp = eff_days * daily_sp
 
-    dev_bug_p = dev_row.get("bug_p", 15.0)
-    dev_adhoc_p = dev_row.get("adhoc_p", 10.0)
-    dev_cere_p = dev_row.get("ceremony_p", 10.0)
+    dev_bug_p = dev_row.get("bug_p", 0.0)
+    dev_adhoc_p = dev_row.get("adhoc_p", 0.0)
+    dev_cere_p = dev_row.get("ceremony_p", 0.0)
 
-    dev_buffers = total_dev_sp * (dev_bug_p + dev_adhoc_p + dev_cere_p) / 100
+    dev_buffers = dev_bug_p + dev_adhoc_p + dev_cere_p
     dev_avail = total_dev_sp - dev_buffers
 
     backlog_df = get_backlog(selected_s_id)
@@ -158,6 +158,9 @@ if st.button("Create Ticket", type="primary", use_container_width=True):
     elif not title.strip():
         st.error("Title is required.")
     else:
+        if dev_remaining < 0:
+            st.warning(f"⚠️ **Over-allocated!** {primary_assignee} has `{dev_avail:.1f}` SP available but already allocated `{dev_alloced:.1f}` SP.")
+
         be = role_data["backend"]
         fe = role_data["frontend"]
         qa = role_data["qa"]

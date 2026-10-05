@@ -4,7 +4,8 @@ from utils.db import (
     get_sprints, get_team, add_team_member, update_team_member, delete_team_member,
     create_sprint, start_sprint, stop_sprint, update_sprint, delete_sprint, DuplicateUserError,
     update_team_member_fields, get_mongo_db, clear_db_caches,
-    get_current_team_jira_config, update_team_jira_config
+    get_current_team_jira_config, update_team_jira_config,
+    get_team_jira_sync_settings
 )
 from bson import ObjectId
 # Title
@@ -220,8 +221,13 @@ with t_abs[1]:
                                         draft_id, sel_draft,
                                         jira_cfg["board_id"], base_url
                                     )
-                                if result.get("added", 0) > 0:
-                                    st.success(f"Sprint '{sel_draft}' is now Active. Synced {result['added']} ticket(s) from JIRA.")
+                                added = result.get("added", 0)
+                                skipped_closed = result.get("skipped_closed", 0)
+                                if added > 0 or skipped_closed > 0:
+                                    msg = f"Sprint '{sel_draft}' is now Active. Synced {added} ticket(s) from JIRA."
+                                    if skipped_closed > 0:
+                                        msg += f" Skipped {skipped_closed} already-closed ticket(s)."
+                                    st.success(msg)
                                 elif result.get("error"):
                                     st.warning(f"Sprint started, but JIRA sync: {result['error']}")
                                 else:
@@ -243,6 +249,37 @@ with t_abs[1]:
                     
                     if st.form_submit_button("Stop Sprint", type="primary"):
                         stop_sprint(active_sprint['id'], act_end_date)
+
+                        tid = st.session_state.user.get("team_id")
+                        sync_settings = get_team_jira_sync_settings(tid)
+                        auto_sync = sync_settings.get("auto_sync_on_close", True)
+
+                        if auto_sync:
+                            with st.spinner("Syncing ticket statuses to JIRA..."):
+                                from utils.jira_push import push_all_statuses_on_sprint_close
+                                try:
+                                    sync_results = push_all_statuses_on_sprint_close(active_sprint['id'])
+
+                                    if sync_results.get('status') == 'no_mapping':
+                                        st.warning("JIRA status mapping not configured. Skipping status push.")
+                                    elif sync_results.get('total', 0) > 0:
+                                        pushed = sync_results.get('pushed', 0)
+                                        failed = sync_results.get('failed', 0)
+                                        same = sync_results.get('same_status', 0)
+                                        st.success(
+                                            f"JIRA sync: {pushed} updated, {failed} failed, "
+                                            f"{same} already in sync."
+                                        )
+
+                                        if sync_results.get('details'):
+                                            with st.expander("View sync details"):
+                                                for d in sync_results['details']:
+                                                    icon = "✅" if d.get('status') == 'success' else "❌" if d.get('status') == 'failed' else "ℹ️"
+                                                    msg = d.get('message', d.get('reason', ''))
+                                                    st.markdown(f"{icon} **{d.get('jira_key', '')}**: {msg}")
+                                except Exception as e:
+                                    st.error(f"JIRA sync failed: {e}. Sprint was stopped anyway.")
+
                         with st.spinner("Compiling and archiving sprint performance report..."):
                             from utils.reports_generator import compile_and_save_report
                             try:

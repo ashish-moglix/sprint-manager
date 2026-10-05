@@ -215,6 +215,69 @@ def add_comment(issue_key, comment_body):
     return resp.json()
 
 
+# --- TRANSITIONS (STATUS CHANGES) ---
+
+def get_issue_transitions(issue_key):
+    """Get available transitions for an issue.
+
+    Returns list of transition dicts:
+    [{"id": "21", "name": "Done", "to": {"name": "Done", "id": "10001"}}]
+    """
+    url = f"{_base_url()}/rest/api/2/issue/{issue_key}/transitions"
+    resp = requests.get(url, auth=_auth(), headers=_headers(), timeout=30)
+    resp.raise_for_status()
+    return resp.json().get("transitions", [])
+
+
+def get_issue_status(issue_key):
+    """Get current status name of an issue."""
+    url = f"{_base_url()}/rest/api/2/issue/{issue_key}"
+    params = {"fields": "status"}
+    resp = requests.get(url, auth=_auth(), headers=_headers(), params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json().get("fields", {}).get("status", {}).get("name", "")
+
+
+def find_transition_for_status(issue_key, target_status):
+    """Find the transition ID that leads to a target status name.
+
+    Args:
+        issue_key: JIRA issue key
+        target_status: Target status name (case-insensitive match)
+
+    Returns:
+        transition_id str or None
+    """
+    transitions = get_issue_transitions(issue_key)
+    target_lower = target_status.strip().lower()
+    for t in transitions:
+        to_status = t.get("to", {}).get("name", "")
+        if to_status.lower() == target_lower:
+            return str(t.get("id"))
+    return None
+
+
+def transition_issue(issue_key, transition_id, comment=None):
+    """Transition an issue to a new status.
+
+    Args:
+        issue_key: JIRA issue key
+        transition_id: ID of the transition to execute
+        comment: Optional comment to add with the transition
+
+    Returns:
+        True on success
+    """
+    url = f"{_base_url()}/rest/api/2/issue/{issue_key}/transitions"
+    payload = {"transition": {"id": str(transition_id)}}
+    if comment:
+        payload["update"] = {"comment": [{"add": {"body": comment}}]}
+
+    resp = requests.post(url, auth=_auth(), headers=_headers(), json=payload, timeout=30)
+    resp.raise_for_status()
+    return True
+
+
 # --- PARSING ---
 
 def _extract_text_from_adf(node):

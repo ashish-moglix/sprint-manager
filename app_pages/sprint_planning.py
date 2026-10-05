@@ -229,12 +229,12 @@ else:
             daily_sp = 0.0 if dev_role in ['PM', 'EM'] else dev_row['daily_sp']
             total_dev_sp = eff_days * daily_sp
 
-            # Buffer calculation from individual developer parameters
-            dev_bug_p = dev_row.get('bug_p', 15.0)
-            dev_adhoc_p = dev_row.get('adhoc_p', 10.0)
-            dev_cere_p = dev_row.get('ceremony_p', 10.0)
+            # Buffer calculation — bug_p/adhoc_p/ceremony_p are absolute SP values
+            dev_bug_p = dev_row.get('bug_p', 0.0)
+            dev_adhoc_p = dev_row.get('adhoc_p', 0.0)
+            dev_cere_p = dev_row.get('ceremony_p', 0.0)
 
-            dev_buffers = total_dev_sp * (dev_bug_p + dev_adhoc_p + dev_cere_p) / 100
+            dev_buffers = dev_bug_p + dev_adhoc_p + dev_cere_p
             dev_avail = total_dev_sp - dev_buffers
 
             backlog_df = get_backlog(selected_s_id)
@@ -250,6 +250,8 @@ else:
             m5.metric("Remaining", f"{dev_remaining:.1f}", delta=f"{dev_remaining:+.1f}")
 
             if st.button("Commit ticket", type="primary"):
+                if dev_remaining < 0:
+                    st.warning(f"⚠️ **Over-allocated!** {owner} has `{dev_avail:.1f}` SP available but already allocated `{dev_alloced:.1f}` SP.")
                 role = team_df[team_df['name'] == owner]['role'].values[0]
                 add_ticket(selected_s_id, tid, title, owner, role, cat, sp)
                 st.success(f"Ticket {tid} added to sprint {selected_sprint_name}!")
@@ -674,7 +676,7 @@ else:
             dev_leaves = leaves_all[leaves_all['name'] == dev['name']]['total_days'].sum()
             eff_days = max(workdays_total - holiday_count - dev_leaves, 0)
             dev_cap = eff_days * dev['daily_sp']
-            dev_buf = dev_cap * (dev.get('bug_p', 15) + dev.get('adhoc_p', 10) + dev.get('ceremony_p', 10)) / 100
+            dev_buf = dev.get('bug_p', 0.0) + dev.get('adhoc_p', 0.0) + dev.get('ceremony_p', 0.0)
             dev_avail = dev_cap - dev_buf
             dev_alloc = get_dev_allocated_sp(dev['name'], tasks)
             capacity += dev_cap

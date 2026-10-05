@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
-from utils.db import get_sprints, get_backlog, get_ticket_comments, get_current_team_id
+from utils.db import (
+    get_sprints, get_backlog, get_ticket_comments, get_current_team_id,
+    get_jira_status_mapping
+)
 
 st.set_page_config(page_title="Ticket Details", page_icon=":material/description:", layout="wide")
 
@@ -110,6 +113,75 @@ with st.container(border=True):
 
         synced = ticket.get("synced_from_jira", False)
         st.markdown(f"**Synced from JIRA:** {'Yes' if synced else 'No'}")
+
+# --- JIRA Sync Button ---
+jira_key = ticket.get("jira_key", "")
+if jira_key:
+    st.markdown("---")
+    with st.container(border=True):
+        st.subheader(":material/sync: JIRA Status Sync")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"**Current JIRA Status:** `{ticket.get('jira_status', 'N/A')}`")
+            last_push = ticket.get('jira_last_status_push', '')
+            st.markdown(f"**Last Push:** {last_push[:16] if last_push else 'Never'}")
+
+        with c2:
+            portal_status = ticket.get('status', 'Todo')
+            st.markdown(f"**Portal Status:** `{portal_status}`")
+            be = ticket.get('backend_status', 'NA') or 'NA'
+            fe = ticket.get('frontend_status', 'NA') or 'NA'
+            qa = ticket.get('qa_status', 'NA') or 'NA'
+            st.markdown(f"**Roles:** BE=`{be}` · FE=`{fe}` · QA=`{qa}`")
+
+        if st.button("Push Status to JIRA", type="primary", key="push_status_btn", use_container_width=True):
+            tid = get_current_team_id()
+            mapping_doc = get_jira_status_mapping(str(tid))
+
+            if not mapping_doc:
+                st.error("No status mapping configured. Ask your team admin to set it up in JIRA Status Mapping.")
+            else:
+                from utils.jira_push import _resolve_target_jira_status, push_ticket_status_to_jira
+
+                target_status, transition_id = _resolve_target_jira_status(
+                    ticket, mapping_doc.get("mappings", [])
+                )
+
+                if not target_status:
+                    st.warning("No JIRA status mapping matches the current portal status.")
+                else:
+                    with st.spinner(f"Pushing status '{target_status}' to JIRA..."):
+                        result = push_ticket_status_to_jira(
+                            str(selected_s_id),
+                            ticket['ticket_id'],
+                            jira_key,
+                            target_status,
+                            transition_id
+                        )
+
+                    if result['status'] == 'success':
+                        st.success(result['message'])
+                    elif result['status'] == 'same_status':
+                        st.info(result['message'])
+                    elif result['status'] == 'no_transition':
+                        st.warning(result['message'])
+                    else:
+                        st.error(result['message'])
+
+        # Show push history
+        push_history = ticket.get("jira_status_push_history", [])
+        if push_history:
+            with st.expander(f"Push History ({len(push_history)} attempts)"):
+                for ph in reversed(push_history[-5:]):
+                    icon = "✅" if ph.get("success") else "❌"
+                    pushed_at = ph.get('pushed_at', '')[:16]
+                    st.markdown(
+                        f"{icon} **{ph.get('from_status', '?')}** → **{ph.get('to_status', '?')}** "
+                        f"· {pushed_at}"
+                    )
+                    if ph.get("error"):
+                        st.caption(f"Error: {ph['error'][:150]}")
 
 st.markdown("---")
 

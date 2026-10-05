@@ -1,9 +1,13 @@
 from utils.db import (
     get_mongo_db, get_current_team_id,
     get_user_jira_account_id, update_ticket_jira_push_status,
-    get_ticket_comments, add_ticket_comment
+    get_ticket_comments, add_ticket_comment,
+    get_jira_status_mapping, update_ticket_jira_status_push, update_sprint_jira_close_sync
 )
-from utils.jira_client import update_issue_fields, add_comment, _base_url, DEFAULT_STORY_POINTS_FIELD
+from utils.jira_client import (
+    update_issue_fields, add_comment, _base_url, DEFAULT_STORY_POINTS_FIELD,
+    get_issue_status, find_transition_for_status, transition_issue
+)
 
 
 def push_ticket_to_jira(sprint_id, ticket_id, jira_key, assignee_name, sp,
@@ -73,6 +77,159 @@ def push_ticket_to_jira(sprint_id, ticket_id, jira_key, assignee_name, sp,
             str(sprint_id), ticket_id, "failed", datetime.now(timezone.utc).isoformat()
         )
         return {"status": "failed", "message": str(e), "pushed_comments": 0}
+
+
+# --- STATUS PUSH ---
+
+def _resolve_target_jira_status(ticket, mappings):
+    """Determine target JIRA status from portal status fields and mapping config.
+
+    Logic:
+    - overall Done + all BE/FE/QA Done/NA → Done mapping
+    - overall In Progress or some roles Done → In Progress mapping
+    - otherwise → Todo mapping
+    """
+    overall = ticket.get("status", "Todo")
+    be_status = ticket.get("backend_status", "NA") or "NA"
+    fe_status = ticket.get("frontend_status", "NA") or "NA"
+    qa_status = ticket.get("qa_status", "NA") or "NA"
+
+    def _all_done():
+        roles = [be_status, fe_status, qa_status]
+        return all(s in ("Done", "NA") for s in roles) and any(s == "Done" for s in roles)
+
+    def _any_done():
+        return be_status == "Done" or fe_status == "Done" or qa_status == "Done"
+
+    # Determine composite key
+    if overall == "Done" or _all_done():
+        portal_key = "Done"
+    elif overall == "In Progress" or _any_done():
+        portal_key = "In Progress"
+    else:
+        portal_key = "Todo"
+
+    # Find matching mapping
+    for m in mappings:
+        if m.get("portal_status") == portal_key:
+            return m.get("jira_status"), m.get("jira_transition_id")
+    return None, None
+
+
+def push_ticket_status_to_jira(sprint_id, ticket_id, jira_key, target_status,
+                                transition_id=None, comment=None):
+    """Push status change to JIRA via transitions API.
+
+    Returns dict: {"status": "success"|"failed"|"no_transition"|"same_status", "message": str}
+    """
+    try:
+        current_jira_status = get_issue_status(jira_key)
+        if current_jira_status.lower() == target_status.lower():
+            return {"status": "same_status", "message": f"Already in status '{target_status}'"}
+
+        if not transition_id:
+            transition_id = find_transition_for_status(jira_key, target_status)
+
+        if not transition_id:
+            from utils.jira_client import get_issue_transitions
+            available = get_issue_transitions(jira_key)
+            available_names = [t.get("to", {}).get("name", "?") for t in available]
+            update_ticket_jira_status_push(
+                sprint_id, ticket_id, current_jira_status, target_status,
+                False, f"No transition to '{target_status}'. Available: {available_names}"
+            )
+            return {
+                "status": "no_transition",
+                "message": f"No transition to '{target_status}' from '{current_jira_status}'. "
+                          f"Available: {available_names}"
+            }
+
+        transition_comment = comment or f"Status changed to '{target_status}' (via Agile Portal)"
+        transition_issue(jira_key, transition_id, comment=transition_comment)
+
+        update_ticket_jira_status_push(sprint_id, ticket_id, current_jira_status, target_status, True)
+
+        db = get_mongo_db()
+        tid = get_current_team_id()
+        db['backlog'].update_one(
+            {"team_id": str(tid), "sprint_id": str(sprint_id), "ticket_id": ticket_id},
+            {"$set": {"jira_status": target_status}}
+        )
+
+        return {"status": "success", "message": f"Transitioned to '{target_status}' in JIRA"}
+
+    except Exception as e:
+        current = current_jira_status if 'current_jira_status' in dir() else "unknown"
+        update_ticket_jira_status_push(sprint_id, ticket_id, current, target_status, False, str(e))
+        return {"status": "failed", "message": str(e)}
+
+
+def push_all_statuses_on_sprint_close(sprint_id, dry_run=False):
+    """Push all ticket statuses to JIRA when closing a sprint.
+
+    Returns dict: Summary of push results
+    """
+    tid = get_current_team_id()
+    db = get_mongo_db()
+
+    mapping_doc = get_jira_status_mapping(str(tid))
+    if not mapping_doc:
+        update_sprint_jira_close_sync(sprint_id, "no_mapping")
+        return {"status": "no_mapping", "message": "No status mapping configured.", "total": 0}
+
+    tickets = list(db['backlog'].find({"team_id": str(tid), "sprint_id": str(sprint_id)}))
+
+    results = {"total": 0, "pushed": 0, "skipped": 0, "failed": 0, "same_status": 0, "details": []}
+
+    for ticket in tickets:
+        if not ticket.get("jira_key"):
+            continue
+        results["total"] += 1
+        jira_key = ticket["jira_key"]
+
+        target_status, transition_id = _resolve_target_jira_status(
+            ticket, mapping_doc.get("mappings", [])
+        )
+
+        if not target_status:
+            results["skipped"] += 1
+            results["details"].append({
+                "ticket_id": ticket["ticket_id"],
+                "jira_key": jira_key,
+                "status": "skipped",
+                "reason": "No mapping for current portal status",
+            })
+            continue
+
+        if dry_run:
+            results["details"].append({
+                "ticket_id": ticket["ticket_id"],
+                "jira_key": jira_key,
+                "status": "would_push",
+                "target": target_status,
+            })
+            continue
+
+        push_result = push_ticket_status_to_jira(
+            str(sprint_id), ticket["ticket_id"], jira_key,
+            target_status, transition_id
+        )
+
+        key = push_result["status"]
+        if key == "same_status":
+            results["same_status"] += 1
+        elif key == "success":
+            results["pushed"] += 1
+        else:
+            results["failed"] += 1
+        results["details"].append({
+            "ticket_id": ticket["ticket_id"],
+            "jira_key": jira_key,
+            **push_result,
+        })
+
+    update_sprint_jira_close_sync(sprint_id, "completed" if not dry_run else "dry_run", results)
+    return results
 
 
 def _mark_comment_synced(sprint_id, ticket_id, comment):

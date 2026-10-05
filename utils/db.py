@@ -206,11 +206,19 @@ _round_robin_counters = {}
 def assign_round_robin(role, team_df, sprint_id=None):
     """Assign a team member for a given role using load-balanced round-robin.
 
+    Fullstack members are eligible for both backend and frontend roles.
     Counters are persisted in MongoDB so distribution stays fair across
     process restarts and multiple sync runs on the same sprint.
     Returns member name or None if no matching member found.
     """
-    members = team_df[team_df['role'].str.lower() == role.lower()]['name'].tolist()
+    role_lower = role.lower()
+    if role_lower == "backend":
+        mask = team_df['role'].str.lower().isin(["backend", "fullstack"])
+    elif role_lower == "frontend":
+        mask = team_df['role'].str.lower().isin(["frontend", "fullstack"])
+    else:
+        mask = team_df['role'].str.lower() == role_lower
+    members = team_df[mask]['name'].tolist()
     if not members:
         return None
 
@@ -984,6 +992,94 @@ def update_ticket_jira_comments(sprint_id, ticket_id, comments):
     db['backlog'].update_one(
         {"team_id": str(tid), "sprint_id": str(sprint_id), "ticket_id": ticket_id},
         {"$set": {"jira_comments": comments}}
+    )
+    clear_db_caches()
+
+
+# --- JIRA STATUS MAPPING ---
+
+def get_jira_status_mapping(team_id):
+    """Get status mapping config for a team. Returns dict or None."""
+    db = get_mongo_db()
+    return db['jira_status_mapping'].find_one({"team_id": str(team_id)})
+
+
+def save_jira_status_mapping(team_id, mappings, skip_statuses=None):
+    """Save or update status mapping for a team."""
+    db = get_mongo_db()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    db['jira_status_mapping'].update_one(
+        {"team_id": str(team_id)},
+        {"$set": {
+            "mappings": mappings,
+            "skip_statuses": skip_statuses or ["Done", "Closed", "Resolved"],
+            "updated_at": now,
+        }, "$setOnInsert": {"created_at": now}},
+        upsert=True
+    )
+    clear_db_caches()
+
+
+def update_team_jira_sync_settings(team_id, skip_closed_on_sync=None, auto_sync_on_close=None):
+    """Update JIRA sync toggles on team document."""
+    db = get_mongo_db()
+    fields = {}
+    if skip_closed_on_sync is not None:
+        fields["jira_skip_closed_on_sync"] = skip_closed_on_sync
+    if auto_sync_on_close is not None:
+        fields["jira_auto_sync_on_close"] = auto_sync_on_close
+    if fields:
+        db['teams'].update_one({"_id": ObjectId(team_id)}, {"$set": fields})
+        clear_db_caches()
+
+
+def get_team_jira_sync_settings(team_id):
+    """Get JIRA sync toggles from team document."""
+    db = get_mongo_db()
+    team = db['teams'].find_one({"_id": ObjectId(team_id)})
+    if not team:
+        return {"skip_closed_on_sync": True, "auto_sync_on_close": True}
+    return {
+        "skip_closed_on_sync": team.get("jira_skip_closed_on_sync", True),
+        "auto_sync_on_close": team.get("jira_auto_sync_on_close", True),
+    }
+
+
+def update_ticket_jira_status_push(sprint_id, ticket_id, from_status, to_status, success, error=None):
+    """Record a JIRA status push attempt on a ticket."""
+    db = get_mongo_db()
+    tid = get_current_team_id()
+    from datetime import datetime, timezone
+    push_record = {
+        "from_status": from_status,
+        "to_status": to_status,
+        "pushed_at": datetime.now(timezone.utc).isoformat(),
+        "success": success,
+        "error": error,
+    }
+    db['backlog'].update_one(
+        {"team_id": str(tid), "sprint_id": str(sprint_id), "ticket_id": ticket_id},
+        {"$push": {"jira_status_push_history": push_record},
+         "$set": {"jira_last_status_push": push_record["pushed_at"] if success else None}}
+    )
+    clear_db_caches()
+
+
+def update_sprint_jira_close_sync(sprint_id, status, results=None):
+    """Update sprint close sync tracking."""
+    db = get_mongo_db()
+    from datetime import datetime, timezone
+    fields = {"jira_close_sync_status": status}
+    if status == "in_progress":
+        fields["jira_close_sync_started_at"] = datetime.now(timezone.utc).isoformat()
+    elif status in ("completed", "failed"):
+        fields["jira_close_sync_completed_at"] = datetime.now(timezone.utc).isoformat()
+    if results:
+        fields["jira_close_sync_results"] = results
+    db['sprints'].update_one(
+        {"_id": ObjectId(sprint_id) if not isinstance(sprint_id, dict) else sprint_id},
+        {"$set": fields}
     )
     clear_db_caches()
 

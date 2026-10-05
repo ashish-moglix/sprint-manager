@@ -241,7 +241,7 @@ else:
             st.Page("app_pages/super_admin.py", title="Super Admin Console", icon=":material/admin_panel_settings:")
         ])
     else:
-        pg = st.navigation([
+        pages = [
             st.Page("app_pages/dashboard.py", title="Dashboard", icon=":material/dashboard:"),
             st.Page("app_pages/sprint_planning.py", title="Sprint Planning", icon=":material/assignment:"),
             st.Page("app_pages/create_ticket.py", title="Create Ticket", icon=":material/add_circle:"),
@@ -252,7 +252,10 @@ else:
             st.Page("app_pages/team_system_setup.py", title="Team & System Setup", icon=":material/settings:"),
             st.Page("app_pages/sprint_reports.py", title="Sprint Reports", icon=":material/assessment:"),
             st.Page("app_pages/developer_performance.py", title="Developer Performance", icon=":material/bar_chart:"),
-        ])
+        ]
+        if st.session_state.user.get('user_role') in ('Team Admin', 'Super Admin'):
+            pages.append(st.Page("app_pages/jira_status_config.py", title="JIRA Status Mapping", icon=":material/sync:"))
+        pg = st.navigation(pages)
     pg.run()
 
     # 3. Render Bottom of Sidebar: Profile, Change Password & Logout
