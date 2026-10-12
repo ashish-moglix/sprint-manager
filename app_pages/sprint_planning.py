@@ -3,11 +3,37 @@ import pandas as pd
 from datetime import date
 from utils.db import (
     get_sprints, get_team, get_leaves, get_holidays, get_backlog,
-    add_ticket, update_ticket, delete_ticket, clear_db_caches,
+    add_ticket, delete_ticket_by_id, clear_db_caches,
     get_current_team_jira_config, add_ticket_comment, get_ticket_comments,
     get_jira_credentials
 )
 from utils.helpers import get_workdays, get_dev_allocated_sp, compute_sp, compute_actual_sp
+
+
+def _get_completion_indicators(row):
+    """Return completion status indicators for visual display (matches scrum board)."""
+    def is_done(val):
+        return str(val).lower() == 'done' if pd.notna(val) else False
+
+    status_done = is_done(row.get('status'))
+    be_done = is_done(row.get('backend_status'))
+    fe_done = is_done(row.get('frontend_status'))
+    qa_done = is_done(row.get('qa_status'))
+
+    indicators = []
+    if status_done and be_done and fe_done and qa_done:
+        indicators.append("🟢 Live")
+    elif status_done:
+        indicators.append("🟢 Done")
+    else:
+        if be_done:
+            indicators.append("🔵 BE")
+        if fe_done:
+            indicators.append("🟡 FE")
+        if qa_done:
+            indicators.append("🟠 QA")
+
+    return " ".join(indicators) if indicators else "⚪ Todo"
 
 
 def _freeze_columns_js(editor_key: str, freeze_n: int = 3):
@@ -280,14 +306,15 @@ else:
         # 1. Show My Assigned Tasks (Editable)
         st.subheader(f"My Assigned Tasks ({selected_sprint_name})")
         if not tasks.empty and not my_tasks.empty:
-            my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'assignee', 'backend_assignee', 'frontend_assignee', 'qa_assignee',
-                                          'issue_type',
+            my_tasks_display = my_tasks[['id', 'ticket_id', 'title', 'issue_type',
+                                          'assignee', 'backend_assignee', 'frontend_assignee', 'qa_assignee',
                                           'status', 'backend_status', 'frontend_status', 'qa_status',
-                                          'sp', 'backend_sp', 'frontend_sp', 'qa_sp', 'actual_sp',
+                                          'sp', 'backend_sp', 'frontend_sp', 'qa_sp',
                                           'start_date', 'end_date',
                                           'backend_start_date', 'backend_end_date',
                                           'frontend_start_date', 'frontend_end_date',
-                                          'qa_start_date', 'qa_end_date']].copy()
+                                          'qa_start_date', 'qa_end_date',
+                                          'actual_sp']].copy()
             if has_jira_col:
                 my_tasks_display['jira_url'] = my_tasks['jira_url']
             my_tasks_display['sprint'] = selected_sprint_name
@@ -305,8 +332,12 @@ else:
                     my_tasks_display[col] = pd.to_datetime(my_tasks_display[col], format='mixed', errors='coerce').dt.date
             my_tasks_display = my_tasks_display.reset_index(drop=True)
 
+            # Add completion indicator
+            my_tasks_display['completion'] = my_tasks_display.apply(_get_completion_indicators, axis=1)
+
             my_col_config={
                 'id': None,  # Hidden — used for mapping edits back to DB
+                'completion': st.column_config.TextColumn('Progress', width='small', disabled=True),
                 'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
                 'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
                 'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
@@ -316,20 +347,20 @@ else:
                 'frontend_assignee': st.column_config.SelectboxColumn('Frontend', options=['NA'] + team_df['name'].tolist(), width='small'),
                 'qa_assignee': st.column_config.SelectboxColumn('QA', options=['NA'] + team_df['name'].tolist(), width='small'),
                 'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-                'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
-                'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
+                'backend_status': st.column_config.SelectboxColumn('BE Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
+                'frontend_status': st.column_config.SelectboxColumn('FE Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
                 'qa_status': st.column_config.SelectboxColumn('QA Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
-                'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small', disabled=True),
-                'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small'),
-                'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small'),
+                'sp': st.column_config.NumberColumn('SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                'backend_sp': st.column_config.NumberColumn('BE SP', min_value=0.0, step=0.5, width='small'),
+                'frontend_sp': st.column_config.NumberColumn('FE SP', min_value=0.0, step=0.5, width='small'),
                 'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small'),
                 'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
                 'start_date': st.column_config.DateColumn('Start', width='small'),
                 'end_date': st.column_config.DateColumn('End', width='small'),
-                'backend_start_date': st.column_config.DateColumn('Backend Start', width='small'),
-                'backend_end_date': st.column_config.DateColumn('Backend End', width='small'),
-                'frontend_start_date': st.column_config.DateColumn('Frontend Start', width='small'),
-                'frontend_end_date': st.column_config.DateColumn('Frontend End', width='small'),
+                'backend_start_date': st.column_config.DateColumn('BE Start', width='small'),
+                'backend_end_date': st.column_config.DateColumn('BE End', width='small'),
+                'frontend_start_date': st.column_config.DateColumn('FE Start', width='small'),
+                'frontend_end_date': st.column_config.DateColumn('FE End', width='small'),
                 'qa_start_date': st.column_config.DateColumn('QA Start', width='small'),
                 'qa_end_date': st.column_config.DateColumn('QA End', width='small'),
             }
@@ -346,43 +377,45 @@ else:
                 edited = st.session_state.get("my_task_editor", {}).get("edited_rows", {})
                 if not edited:
                     return
+                from utils.db import update_ticket_fields
+                today_str = date.today().isoformat()
+
                 for row_idx, changes in edited.items():
                     row = my_tasks_display.iloc[row_idx]
                     idx = row['id']
                     orig = tasks[tasks['id'] == idx].iloc[0] if idx in tasks['id'].values else None
                     if orig is None:
                         continue
-                    today_str = date.today().isoformat()
-                    new_status = changes.get('status', row.get('status')) or 'Todo'
-                    start_str = str(changes.get('start_date', row.get('start_date'))) if pd.notna(changes.get('start_date', row.get('start_date'))) else None
-                    end_str = str(changes.get('end_date', row.get('end_date'))) if pd.notna(changes.get('end_date', row.get('end_date'))) else None
 
-                    old_status = orig.get('status') or 'Todo'
-                    if new_status == 'In Progress' and old_status != 'In Progress' and not start_str:
-                        start_str = today_str
-                    if new_status == 'Done' and old_status != 'Done' and not end_str:
-                        end_str = today_str
-                    if new_status == 'Todo' and old_status != 'Todo':
-                        start_str = None
-                        end_str = None
+                    # Build field_changes with only the edited fields
+                    field_changes = {}
+                    for key, value in changes.items():
+                        if "date" in key and value is not None and not isinstance(value, str):
+                            field_changes[key] = str(value)
+                        elif key in ("sp", "actual_sp", "backend_sp", "frontend_sp", "qa_sp"):
+                            field_changes[key] = float(value) if value is not None else 0.0
+                        else:
+                            field_changes[key] = value
 
-                    update_ticket(
-                        idx, orig['ticket_id'], orig['title'],
-                        changes.get('assignee', row.get('assignee')) or orig['assignee'],
-                        orig['category'],
-                        float(changes.get('sp', row.get('sp'))),
-                        float(changes.get('actual_sp', row.get('actual_sp'))),
-                        new_status, start_str, end_str,
-                        backend_assignee=changes.get('backend_assignee', row.get('backend_assignee')),
-                        frontend_assignee=changes.get('frontend_assignee', row.get('frontend_assignee')),
-                        qa_assignee=changes.get('qa_assignee', row.get('qa_assignee')),
-                        backend_sp=float(changes.get('backend_sp', row.get('backend_sp')) or 0),
-                        frontend_sp=float(changes.get('frontend_sp', row.get('frontend_sp')) or 0),
-                        qa_sp=float(changes.get('qa_sp', row.get('qa_sp')) or 0),
-                        backend_status=changes.get('backend_status', row.get('backend_status')),
-                        frontend_status=changes.get('frontend_status', row.get('frontend_status')),
-                        qa_status=changes.get('qa_status', row.get('qa_status')),
-                    )
+                    # Auto-set start/end dates on status transitions
+                    if "status" in changes:
+                        new_status = changes["status"] or "Todo"
+                        old_status = orig.get("status") or "Todo"
+                        if new_status == "In Progress" and old_status != "In Progress":
+                            if "start_date" not in changes and not orig.get("start_date"):
+                                field_changes["start_date"] = today_str
+                        elif new_status == "Done" and old_status != "Done":
+                            if "end_date" not in changes and not orig.get("end_date"):
+                                field_changes["end_date"] = today_str
+                        elif new_status == "Todo" and old_status != "Todo":
+                            if "start_date" not in changes:
+                                field_changes["start_date"] = None
+                            if "end_date" not in changes:
+                                field_changes["end_date"] = None
+
+                    # Only send changed fields — prevents overwriting other users' edits
+                    update_ticket_fields(idx, field_changes)
+
                 clear_db_caches()
                 st.session_state["my_task_editor_saved"] = True
 
@@ -410,13 +443,15 @@ else:
             # 2. Show Other Tasks (Read-Only)
             if not other_tasks.empty:
                 st.subheader("Team's Backlog (Read-Only)")
-                other_display = other_tasks[['ticket_id', 'title', 'assignee', 'category', 'issue_type', 'sp', 'actual_sp', 'status', 'start_date', 'end_date',
-                                              'backend_assignee', 'frontend_assignee', 'qa_assignee',
-                                              'backend_sp', 'frontend_sp', 'qa_sp',
+                other_display = other_tasks[['ticket_id', 'title', 'category', 'issue_type',
+                                              'assignee', 'backend_assignee', 'frontend_assignee', 'qa_assignee',
+                                              'status', 'backend_status', 'frontend_status', 'qa_status',
+                                              'sp', 'backend_sp', 'frontend_sp', 'qa_sp',
+                                              'start_date', 'end_date',
                                               'backend_start_date', 'backend_end_date',
                                               'frontend_start_date', 'frontend_end_date',
                                               'qa_start_date', 'qa_end_date',
-                                              'backend_status', 'frontend_status', 'qa_status']].copy()
+                                              'actual_sp']].copy()
                 if has_jira_col:
                     other_display['jira_url'] = other_tasks['jira_url']
                 other_display['sprint'] = selected_sprint_name
@@ -431,33 +466,37 @@ else:
                     if col in other_display.columns:
                         other_display[col] = pd.to_datetime(other_display[col], format='mixed', errors='coerce').dt.date
                 other_display['actual_sp'] = other_display['actual_sp'].fillna(0).astype(float)
+                # Add completion indicator
+                other_display['completion'] = other_display.apply(_get_completion_indicators, axis=1)
+
                 other_col_config = {
+                    'completion': st.column_config.TextColumn('Progress', width='small', disabled=True),
                     'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
                     'ticket_id': st.column_config.TextColumn('Ticket', width='small', disabled=True),
                     'title': st.column_config.TextColumn('Title', width='medium', disabled=True),
                     'issue_type': st.column_config.TextColumn('Type', width='small', disabled=True),
-                    'assignee': st.column_config.TextColumn('Assignee', width='small', disabled=True),
                     'category': st.column_config.TextColumn('Category', width='small', disabled=True),
-                    'status': st.column_config.TextColumn('Status', width='small', disabled=True),
-                    'backend_status': st.column_config.TextColumn('Backend Status', width='small', disabled=True),
-                    'frontend_status': st.column_config.TextColumn('Frontend Status', width='small', disabled=True),
-                    'qa_status': st.column_config.TextColumn('QA Status', width='small', disabled=True),
-                    'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small', disabled=True),
-                    'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small', disabled=True),
-                    'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small', disabled=True),
-                    'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small', disabled=True),
-                    'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
-                    'start_date': st.column_config.DateColumn('Start', width='small'),
-                    'end_date': st.column_config.DateColumn('End', width='small'),
-                    'backend_start_date': st.column_config.DateColumn('Backend Start', width='small'),
-                    'backend_end_date': st.column_config.DateColumn('Backend End', width='small'),
-                    'frontend_start_date': st.column_config.DateColumn('Frontend Start', width='small'),
-                    'frontend_end_date': st.column_config.DateColumn('Frontend End', width='small'),
-                    'qa_start_date': st.column_config.DateColumn('QA Start', width='small'),
-                    'qa_end_date': st.column_config.DateColumn('QA End', width='small'),
+                    'assignee': st.column_config.TextColumn('Assignee', width='small', disabled=True),
                     'backend_assignee': st.column_config.TextColumn('Backend', width='small', disabled=True),
                     'frontend_assignee': st.column_config.TextColumn('Frontend', width='small', disabled=True),
                     'qa_assignee': st.column_config.TextColumn('QA', width='small', disabled=True),
+                    'status': st.column_config.TextColumn('Status', width='small', disabled=True),
+                    'backend_status': st.column_config.TextColumn('BE Status', width='small', disabled=True),
+                    'frontend_status': st.column_config.TextColumn('FE Status', width='small', disabled=True),
+                    'qa_status': st.column_config.TextColumn('QA Status', width='small', disabled=True),
+                    'sp': st.column_config.NumberColumn('SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'backend_sp': st.column_config.NumberColumn('BE SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'frontend_sp': st.column_config.NumberColumn('FE SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
+                    'start_date': st.column_config.DateColumn('Start', width='small', disabled=True),
+                    'end_date': st.column_config.DateColumn('End', width='small', disabled=True),
+                    'backend_start_date': st.column_config.DateColumn('BE Start', width='small', disabled=True),
+                    'backend_end_date': st.column_config.DateColumn('BE End', width='small', disabled=True),
+                    'frontend_start_date': st.column_config.DateColumn('FE Start', width='small', disabled=True),
+                    'frontend_end_date': st.column_config.DateColumn('FE End', width='small', disabled=True),
+                    'qa_start_date': st.column_config.DateColumn('QA Start', width='small', disabled=True),
+                    'qa_end_date': st.column_config.DateColumn('QA End', width='small', disabled=True),
                 }
                 if has_jira_col:
                     other_col_config['jira_url'] = st.column_config.LinkColumn('JIRA', width='small', display_text='Open')
@@ -504,15 +543,16 @@ else:
         if title_search.strip():
             filtered_tasks = filtered_tasks[filtered_tasks['title'].str.contains(title_search.strip(), case=False, na=False)]
 
-        # Reorder columns for better visibility
-        tasks_display = filtered_tasks[['ticket_id', 'title', 'assignee', 'category', 'issue_type',
+        # Canonical column order (matches scrum board)
+        tasks_display = filtered_tasks[['ticket_id', 'title', 'category', 'issue_type',
+                                         'assignee', 'backend_assignee', 'frontend_assignee', 'qa_assignee',
                                          'status', 'backend_status', 'frontend_status', 'qa_status',
-                                         'sp', 'backend_sp', 'frontend_sp', 'qa_sp', 'actual_sp',
+                                         'sp', 'backend_sp', 'frontend_sp', 'qa_sp',
                                          'start_date', 'end_date',
                                          'backend_start_date', 'backend_end_date',
                                          'frontend_start_date', 'frontend_end_date',
                                          'qa_start_date', 'qa_end_date',
-                                         'backend_assignee', 'frontend_assignee', 'qa_assignee']].copy()
+                                         'actual_sp']].copy()
         if has_jira_col:
             tasks_display['jira_url'] = filtered_tasks['jira_url']
             tasks_display['jira_push_status'] = filtered_tasks.get('jira_push_status', None)
@@ -536,72 +576,82 @@ else:
             edited = st.session_state.get("task_editor", {}).get("edited_rows", {})
             if not edited:
                 return
+            from utils.db import update_ticket_fields
+            today_str = date.today().isoformat()
+
             for row_idx, changes in edited.items():
                 if "Delete" in changes:
                     continue
                 row = tasks_display.iloc[row_idx]
                 mongo_id = row['_id']
-                new_row = {**row.to_dict(), **changes}
+
+                # Get original values for status-transition logic
                 orig = tasks[tasks['id'] == mongo_id].iloc[0] if mongo_id in tasks['id'].values else None
-                today_str = date.today().isoformat()
-                new_status = new_row.get('status') or 'Todo'
-                start_str = str(new_row['start_date']) if pd.notna(new_row.get('start_date')) else None
-                end_str = str(new_row['end_date']) if pd.notna(new_row.get('end_date')) else None
-                if orig is not None:
-                    old_status = orig.get('status') or 'Todo'
-                    if new_status == 'In Progress' and old_status != 'In Progress' and not start_str:
-                        start_str = today_str
-                    if new_status == 'Done' and old_status != 'Done' and not end_str:
-                        end_str = today_str
-                    if new_status == 'Todo' and old_status != 'Todo':
-                        start_str = None
-                        end_str = None
-                # Use pre-computed values from display
-                sp_val = float(new_row['sp'])
-                actual_sp_val = float(new_row['actual_sp'])
-                update_ticket(
-                    mongo_id, new_row['ticket_id'], new_row['title'], new_row['assignee'],
-                    new_row['category'], sp_val, actual_sp_val,
-                    new_status, start_str, end_str,
-                    backend_assignee=new_row.get('backend_assignee'),
-                    frontend_assignee=new_row.get('frontend_assignee'),
-                    qa_assignee=new_row.get('qa_assignee'),
-                    backend_sp=float(new_row.get('backend_sp') or 0),
-                    frontend_sp=float(new_row.get('frontend_sp') or 0),
-                    qa_sp=float(new_row.get('qa_sp') or 0),
-                    backend_status=new_row.get('backend_status'),
-                    frontend_status=new_row.get('frontend_status'),
-                    qa_status=new_row.get('qa_status'),
-                )
+
+                # Build field_changes with only the edited fields
+                field_changes = {}
+                for key, value in changes.items():
+                    if "date" in key and value is not None and not isinstance(value, str):
+                        field_changes[key] = str(value)
+                    elif key in ("sp", "actual_sp", "backend_sp", "frontend_sp", "qa_sp"):
+                        field_changes[key] = float(value) if value is not None else 0.0
+                    else:
+                        field_changes[key] = value
+
+                # Auto-set start/end dates on status transitions
+                if "status" in changes and orig is not None:
+                    new_status = changes["status"] or "Todo"
+                    old_status = orig.get("status") or "Todo"
+                    if new_status == "In Progress" and old_status != "In Progress":
+                        if "start_date" not in changes and not orig.get("start_date"):
+                            field_changes["start_date"] = today_str
+                    elif new_status == "Done" and old_status != "Done":
+                        if "end_date" not in changes and not orig.get("end_date"):
+                            field_changes["end_date"] = today_str
+                    elif new_status == "Todo" and old_status != "Todo":
+                        if "start_date" not in changes:
+                            field_changes["start_date"] = None
+                        if "end_date" not in changes:
+                            field_changes["end_date"] = None
+
+                # Only send changed fields — prevents overwriting other users' edits
+                update_ticket_fields(mongo_id, field_changes)
+
             clear_db_caches()
 
+        # Add completion indicator (matches scrum board)
+        if not tasks_display.empty:
+            tasks_display['completion'] = tasks_display.apply(_get_completion_indicators, axis=1)
+        else:
+            tasks_display['completion'] = ""
+
         admin_col_config={
-            'sprint': st.column_config.TextColumn('Sprint', width='small', disabled=True),
+            'completion': st.column_config.TextColumn('Progress', width='small', disabled=True),
             'ticket_id': st.column_config.TextColumn('Ticket', width='small'),
             'title': st.column_config.TextColumn('Title', width='medium'),
             'issue_type': st.column_config.TextColumn('Type', width='small', disabled=True),
-            'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
             'category': st.column_config.SelectboxColumn('Category', options=['New Work', 'Spillover', 'Bug Fix', 'Adhoc'], width='small'),
+            'assignee': st.column_config.SelectboxColumn('Assignee', options=team_df['name'].tolist(), width='small'),
+            'backend_assignee': st.column_config.SelectboxColumn('Backend', options=['NA'] + team_df['name'].tolist(), width='small'),
+            'frontend_assignee': st.column_config.SelectboxColumn('Frontend', options=['NA'] + team_df['name'].tolist(), width='small'),
+            'qa_assignee': st.column_config.SelectboxColumn('QA', options=['NA'] + team_df['name'].tolist(), width='small'),
             'status': st.column_config.SelectboxColumn('Status', options=['Todo', 'In Progress', 'Done'], width='small'),
-            'backend_status': st.column_config.SelectboxColumn('Backend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
-            'frontend_status': st.column_config.SelectboxColumn('Frontend Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
+            'backend_status': st.column_config.SelectboxColumn('BE Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
+            'frontend_status': st.column_config.SelectboxColumn('FE Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
             'qa_status': st.column_config.SelectboxColumn('QA Status', options=['NA', 'Todo', 'In Progress', 'Done'], width='small'),
-            'sp': st.column_config.NumberColumn('Est. SP', min_value=0.0, step=0.5, width='small', disabled=True),
-            'backend_sp': st.column_config.NumberColumn('Backend SP', min_value=0.0, step=0.5, width='small'),
-            'frontend_sp': st.column_config.NumberColumn('Frontend SP', min_value=0.0, step=0.5, width='small'),
+            'sp': st.column_config.NumberColumn('SP', min_value=0.0, step=0.5, width='small', disabled=True),
+            'backend_sp': st.column_config.NumberColumn('BE SP', min_value=0.0, step=0.5, width='small'),
+            'frontend_sp': st.column_config.NumberColumn('FE SP', min_value=0.0, step=0.5, width='small'),
             'qa_sp': st.column_config.NumberColumn('QA SP', min_value=0.0, step=0.5, width='small'),
-            'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
             'start_date': st.column_config.DateColumn('Start', width='small'),
             'end_date': st.column_config.DateColumn('End', width='small'),
-            'backend_start_date': st.column_config.DateColumn('Backend Start', width='small'),
-            'backend_end_date': st.column_config.DateColumn('Backend End', width='small'),
-            'frontend_start_date': st.column_config.DateColumn('Frontend Start', width='small'),
-            'frontend_end_date': st.column_config.DateColumn('Frontend End', width='small'),
+            'backend_start_date': st.column_config.DateColumn('BE Start', width='small'),
+            'backend_end_date': st.column_config.DateColumn('BE End', width='small'),
+            'frontend_start_date': st.column_config.DateColumn('FE Start', width='small'),
+            'frontend_end_date': st.column_config.DateColumn('FE End', width='small'),
             'qa_start_date': st.column_config.DateColumn('QA Start', width='small'),
             'qa_end_date': st.column_config.DateColumn('QA End', width='small'),
-            'backend_assignee': st.column_config.SelectboxColumn('Backend Assignee', options=['NA'] + team_df['name'].tolist(), width='small'),
-            'frontend_assignee': st.column_config.SelectboxColumn('Frontend Assignee', options=['NA'] + team_df['name'].tolist(), width='small'),
-            'qa_assignee': st.column_config.SelectboxColumn('QA Assignee', options=['NA'] + team_df['name'].tolist(), width='small'),
+            'actual_sp': st.column_config.NumberColumn('Actual SP', min_value=0.0, step=0.5, width='small', disabled=True),
             'Delete': st.column_config.CheckboxColumn('Delete', default=False),
             '_id': None,
         }
@@ -623,7 +673,7 @@ else:
             hide_index=True,
             num_rows="dynamic",
             use_container_width=True,
-            disabled=['sprint', 'ticket_id', 'title', 'issue_type', 'category', 'actual_sp'],
+            disabled=['completion', 'ticket_id', 'title', 'issue_type', 'category', 'actual_sp'],
             on_change=_auto_save,
             # height=len(tasks_display),
         )
@@ -642,7 +692,7 @@ else:
             if st.button("Confirm delete", type="primary", key="confirm_del"):
                 deleted = 0
                 for _, row in delete_marked:
-                    delete_ticket(row['ticket_id'])
+                    delete_ticket_by_id(row['_id'])
                     deleted += 1
                 if "task_editor" in st.session_state:
                     del st.session_state["task_editor"]

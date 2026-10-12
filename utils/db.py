@@ -484,9 +484,25 @@ def update_ticket(idx, ticket_id, title, assignee, category, sp, actual_sp, stat
     db['backlog'].update_one({"_id": ObjectId(idx)}, {"$set": updates})
     clear_db_caches()
 
-def delete_ticket(ticket_id):
+def update_ticket_fields(mongo_id, field_changes):
+    """Update only specific fields on a ticket — safe for concurrent edits.
+
+    Each call sends only the changed fields to MongoDB via $set, so two users
+    editing different fields on the same ticket won't overwrite each other.
+    """
+    if not field_changes:
+        return
     db = get_mongo_db()
-    db['backlog'].delete_one({"ticket_id": ticket_id})
+    db['backlog'].update_one(
+        {"_id": ObjectId(mongo_id)},
+        {"$set": field_changes}
+    )
+    clear_db_caches()
+
+def delete_ticket_by_id(mongo_id):
+    """Delete a ticket by its MongoDB _id — safe, scoped to one document."""
+    db = get_mongo_db()
+    db['backlog'].delete_one({"_id": ObjectId(mongo_id)})
     clear_db_caches()
 
 def add_leave(name, reason, start_date, end_date, total_days, sprint_id):

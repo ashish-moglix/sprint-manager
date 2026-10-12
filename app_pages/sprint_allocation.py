@@ -125,7 +125,7 @@ def _dev_capacity(dev_row):
 
 def _get_dev_tasks(dev_name):
     if tasks.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=tasks.columns)
     mask = (
         (tasks["assignee"] == dev_name) |
         (tasks["backend_assignee"] == dev_name) |
@@ -136,7 +136,7 @@ def _get_dev_tasks(dev_name):
 
 def _get_unassigned_tasks():
     if tasks.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=tasks.columns)
     empty = ("", "NA")
     mask = (
         (tasks["assignee"].isna() | tasks["assignee"].isin(empty)) &
@@ -147,7 +147,7 @@ def _get_unassigned_tasks():
     return tasks[mask].copy()
 
 def _auto_save_changes(editor_key):
-    """Auto-save changes from data editor"""
+    """Auto-save changes from data editor — only writes changed fields."""
     edited_state = st.session_state.get(editor_key, {})
     edited_rows = edited_state.get("edited_rows", {})
 
@@ -160,42 +160,44 @@ def _auto_save_changes(editor_key):
         return
 
     for row_idx, changes in edited_rows.items():
-        # Get the task ID directly from the view dataframe
+        if "Delete" in changes:
+            continue
+
         actual_row = view_df.iloc[row_idx]
         mongo_id = actual_row["id"]
 
-        # Find this task in the full tasks dataframe to get current values
+        # Normalize dates in changes
+        field_changes = {}
+        for key, value in changes.items():
+            if "date" in key and value is not None:
+                field_changes[key] = str(value) if not isinstance(value, str) else value
+            elif key in ("sp", "actual_sp", "backend_sp", "frontend_sp", "qa_sp"):
+                field_changes[key] = float(value) if value is not None else 0.0
+            else:
+                field_changes[key] = value
+
+        # Auto-set start/end dates on status transitions
         task_row = tasks[tasks["id"] == mongo_id].iloc[0]
+        new_status = changes.get("status", task_row.get("status", "Todo"))
+        old_status = task_row.get("status", "Todo")
+        today_str = __import__("datetime").date.today().isoformat()
 
-        # Build update with original values + changes
-        update_data = {
-            "ticket_id": changes.get("ticket_id", task_row["ticket_id"]),
-            "title": changes.get("title", task_row["title"]),
-            "assignee": changes.get("assignee", task_row.get("assignee")),
-            "category": changes.get("category", task_row.get("category", "New Work")),
-            "sp": float(changes.get("sp", task_row.get("sp", 0.0))),
-            "actual_sp": float(task_row.get("actual_sp", 0.0)),
-            "status": changes.get("status", task_row.get("status", "Todo")),
-            "start_date": str(changes.get("start_date", task_row.get("start_date"))) if changes.get("start_date") else None,
-            "end_date": str(changes.get("end_date", task_row.get("end_date"))) if changes.get("end_date") else None,
-            "backend_assignee": changes.get("backend_assignee", task_row.get("backend_assignee")),
-            "frontend_assignee": changes.get("frontend_assignee", task_row.get("frontend_assignee")),
-            "qa_assignee": changes.get("qa_assignee", task_row.get("qa_assignee")),
-            "backend_sp": float(changes.get("backend_sp", task_row.get("backend_sp", 0.0))),
-            "frontend_sp": float(changes.get("frontend_sp", task_row.get("frontend_sp", 0.0))),
-            "qa_sp": float(changes.get("qa_sp", task_row.get("qa_sp", 0.0))),
-            "backend_status": changes.get("backend_status", task_row.get("backend_status", "Todo")),
-            "frontend_status": changes.get("frontend_status", task_row.get("frontend_status", "Todo")),
-            "qa_status": changes.get("qa_status", task_row.get("qa_status", "Todo")),
-            "backend_start_date": str(changes.get("backend_start_date", task_row.get("backend_start_date"))) if changes.get("backend_start_date") else None,
-            "backend_end_date": str(changes.get("backend_end_date", task_row.get("backend_end_date"))) if changes.get("backend_end_date") else None,
-            "frontend_start_date": str(changes.get("frontend_start_date", task_row.get("frontend_start_date"))) if changes.get("frontend_start_date") else None,
-            "frontend_end_date": str(changes.get("frontend_end_date", task_row.get("frontend_end_date"))) if changes.get("frontend_end_date") else None,
-            "qa_start_date": str(changes.get("qa_start_date", task_row.get("qa_start_date"))) if changes.get("qa_start_date") else None,
-            "qa_end_date": str(changes.get("qa_end_date", task_row.get("qa_end_date"))) if changes.get("qa_end_date") else None,
-        }
+        if "status" in changes:
+            if new_status == "In Progress" and old_status != "In Progress":
+                if not changes.get("start_date") and not task_row.get("start_date"):
+                    field_changes["start_date"] = today_str
+            elif new_status == "Done" and old_status != "Done":
+                if not changes.get("end_date") and not task_row.get("end_date"):
+                    field_changes["end_date"] = today_str
+            elif new_status == "Todo" and old_status != "Todo":
+                if "start_date" not in changes:
+                    field_changes["start_date"] = None
+                if "end_date" not in changes:
+                    field_changes["end_date"] = None
 
-        update_ticket(mongo_id, **update_data)
+        # Only send changed fields — prevents overwriting other users' edits
+        from utils.db import update_ticket_fields
+        update_ticket_fields(mongo_id, field_changes)
 
     clear_db_caches()
     st.session_state[f"{editor_key}_saved"] = True

@@ -185,21 +185,68 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
                 skipped += 1
                 _fetch_and_cache_comments(sprint_id, jira_key, jira_key)
                 new_desc = parsed.get("description", "")
+                jira_sp = parsed["sp"]
+
+                # Fetch existing ticket to preserve local edits
+                existing_doc = db['backlog'].find_one(
+                    {"team_id": str(tid), "sprint_id": str(sprint_id), "jira_key": jira_key}
+                )
+
+                # Update only JIRA-sourced fields. Preserve local edits:
+                # - assignees (backend/frontend/qa_assignee) — set locally
+                # - role SPs (backend_sp/frontend_sp/qa_sp) — set locally
+                # - statuses — set locally (we track portal status separately)
+                # - dates — set locally
+                update_fields = {
+                    "title": parsed["title"],
+                    "description": new_desc,
+                    "jira_status": parsed["jira_status"],
+                    "issue_type": parsed.get("issue_type", ""),
+                }
+
+                # For sp: use max of local and JIRA value, so manual SP adjustments are preserved
+                # unless JIRA has a higher updated value
+                if existing_doc:
+                    local_sp = existing_doc.get("sp", 0) or 0
+                    local_be_sp = existing_doc.get("backend_sp", 0) or 0
+                    local_fe_sp = existing_doc.get("frontend_sp", 0) or 0
+                    local_qa_sp = existing_doc.get("qa_sp", 0) or 0
+                    local_computed = local_be_sp + local_fe_sp + local_qa_sp
+
+                    # If user has set role-level SP, use the computed total (user's intent)
+                    # Otherwise use max of JIRA value and existing sp
+                    if local_computed > 0:
+                        update_fields["sp"] = local_computed
+                    else:
+                        update_fields["sp"] = max(local_sp, jira_sp)
+
+                    # If user hasn't split SP into roles yet, auto-sync from JIRA value
+                    if local_computed == 0 and jira_sp > 0:
+                        # Check if assignees exist and auto-split
+                        be_assignee = existing_doc.get("backend_assignee")
+                        fe_assignee = existing_doc.get("frontend_assignee")
+                        qa_assignee = existing_doc.get("qa_assignee")
+                        be_sp_new, fe_sp_new, qa_sp_new = _split_sp_for_roles(
+                            jira_sp, bool(be_assignee), bool(fe_assignee), bool(qa_assignee)
+                        )
+                        if be_assignee:
+                            update_fields["backend_sp"] = be_sp_new
+                        if fe_assignee:
+                            update_fields["frontend_sp"] = fe_sp_new
+                        if qa_assignee:
+                            update_fields["qa_sp"] = qa_sp_new
+                        update_fields["sp"] = jira_sp
+                else:
+                    update_fields["sp"] = jira_sp
+
+                # Only update jira_status if JIRA side changed (don't regress local progress)
+                # Keep portal status fields untouched — they are managed locally
+
                 result = db['backlog'].update_one(
                     {"team_id": str(tid), "sprint_id": str(sprint_id), "jira_key": jira_key},
-                    {"$set": {
-                        "title": parsed["title"],
-                        "description": new_desc,
-                        "jira_status": parsed["jira_status"],
-                        "sp": parsed["sp"],
-                        "issue_type": parsed.get("issue_type", ""),
-                    }}
+                    {"$set": update_fields}
                 )
-                existing_doc = db['backlog'].find_one(
-                    {"team_id": str(tid), "sprint_id": str(sprint_id), "jira_key": jira_key},
-                    {"description": 1}
-                )
-                print(f"[SYNC DEBUG] Updated {jira_key}: matched={result.matched_count}, modified={result.modified_count}, desc_len={len(new_desc)}, stored_desc={existing_doc.get('description')!r}")
+                print(f"[SYNC] Re-synced {jira_key}: matched={result.matched_count}, fields={list(update_fields.keys())}")
                 continue
 
             # Match assignee by email to sprint manager user
