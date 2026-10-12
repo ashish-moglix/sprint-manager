@@ -210,11 +210,20 @@ else:
                     if result.get("error"):
                         st.warning(result["error"])
                     else:
-                        if result["added"] > 0:
-                            st.success(f"Added {result['added']} new ticket(s) from JIRA. {result['skipped']} already existed.")
+                        carried = result.get("carried_forward", 0)
+                        added = result.get("added", 0)
+                        if carried > 0 or added > 0:
+                            msg_parts = []
+                            if carried > 0:
+                                msg_parts.append(f"**{carried} ticket(s) carried forward** from previous sprint (spillover)")
+                            if added > 0:
+                                msg_parts.append(f"**{added} new ticket(s)** from JIRA")
+                            st.success(" · ".join(msg_parts) + f". {result['skipped']} already existed.")
                             st.rerun()
                         else:
                             st.info("No new tickets found in JIRA. All tickets already synced.")
+                        if result.get("carried_forward", 0) > 0:
+                            st.caption("💡 Carried-forward tickets kept their assignees, SPs, and statuses from the previous sprint.")
                         if result.get("errors"):
                             st.warning(f"{len(result['errors'])} ticket(s) failed to sync: " + "; ".join(result["errors"]))
             with c_info:

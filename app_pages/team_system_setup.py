@@ -222,11 +222,18 @@ with t_abs[1]:
                                         jira_cfg["board_id"], base_url
                                     )
                                 added = result.get("added", 0)
+                                carried = result.get("carried_forward", 0)
                                 skipped_closed = result.get("skipped_closed", 0)
-                                if added > 0 or skipped_closed > 0:
-                                    msg = f"Sprint '{sel_draft}' is now Active. Synced {added} ticket(s) from JIRA."
+                                if added > 0 or carried > 0 or skipped_closed > 0:
+                                    msg = f"Sprint '{sel_draft}' is now Active. "
+                                    parts = []
+                                    if carried > 0:
+                                        parts.append(f"{carried} carried forward from previous sprint")
+                                    if added > 0:
+                                        parts.append(f"{added} new from JIRA")
+                                    msg += " · ".join(parts) + "."
                                     if skipped_closed > 0:
-                                        msg += f" Skipped {skipped_closed} already-closed ticket(s)."
+                                        msg += f" Skipped {skipped_closed} already-closed."
                                     st.success(msg)
                                 elif result.get("error"):
                                     st.warning(f"Sprint started, but JIRA sync: {result['error']}")

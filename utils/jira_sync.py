@@ -128,7 +128,7 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
     Tickets with closed/Done/Resolved JIRA status are skipped based on team config.
     Initial portal status is derived from JIRA status.
 
-    Returns dict with counts: {"added": N, "skipped": N, "skipped_closed": N, "total_jira": N}
+    Returns dict with counts: {"added": N, "carried_forward": N, "skipped": N, "skipped_closed": N, "total_jira": N}
     """
     db = get_mongo_db()
     tid = get_current_team_id()
@@ -165,6 +165,7 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
     print(f"[SYNC DEBUG] team_id={tid}, sprint_id={sprint_id}, existing_keys count={len(existing_keys)}")
 
     added = 0
+    carried_forward = 0
     skipped = 0
     skipped_closed = 0
     errors = []
@@ -249,13 +250,73 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
                 print(f"[SYNC] Re-synced {jira_key}: matched={result.matched_count}, fields={list(update_fields.keys())}")
                 continue
 
-            # Match assignee by email to sprint manager user
-            matched_name = _match_assignee_by_email(parsed.get("assignee_email"))
-            assignee = matched_name if matched_name else parsed["assignee"]
-
             issue_type = parsed.get("issue_type", "")
             parent_key = parsed.get("parent_key", "")
             is_epic = issue_type.lower() == "epic"
+            initial_status = _derive_portal_status(jira_status)
+
+            # Check if this ticket exists in a previous sprint (spillover carry-forward)
+            from utils.db import find_ticket_across_sprints
+            prev_ticket = find_ticket_across_sprints(jira_key, exclude_sprint_id=str(sprint_id))
+
+            if prev_ticket:
+                # Carry forward all local data from previous sprint
+                carried_forward += 1
+                print(f"[SYNC] Carrying forward spillover ticket {jira_key} from sprint {prev_ticket.get('sprint_id')}")
+
+                be_sp_prev = prev_ticket.get("backend_sp", 0.0) or 0.0
+                fe_sp_prev = prev_ticket.get("frontend_sp", 0.0) or 0.0
+                qa_sp_prev = prev_ticket.get("qa_sp", 0.0) or 0.0
+                carried_sp = round(be_sp_prev + fe_sp_prev + qa_sp_prev, 1)
+                if carried_sp == 0:
+                    carried_sp = parsed["sp"]
+
+                db['backlog'].insert_one({
+                    "team_id": str(tid),
+                    "sprint_id": str(sprint_id),
+                    "ticket_id": jira_key,
+                    "title": parsed["title"],
+                    "description": parsed.get("description", ""),
+                    "assignee": prev_ticket.get("assignee", ""),
+                    "role": prev_ticket.get("role", ""),
+                    "category": "Spillover",
+                    "issue_type": issue_type,
+                    "sp": carried_sp,
+                    "actual_sp": 0.0,
+                    "status": prev_ticket.get("status", initial_status),
+                    "start_date": prev_ticket.get("start_date"),
+                    "end_date": prev_ticket.get("end_date"),
+                    "jira_key": jira_key,
+                    "jira_url": parsed["jira_url"],
+                    "jira_status": jira_status,
+                    "synced_from_jira": True,
+                    "jira_comments": [],
+                    "local_comments": [],
+                    "backend_assignee": prev_ticket.get("backend_assignee"),
+                    "frontend_assignee": prev_ticket.get("frontend_assignee"),
+                    "qa_assignee": prev_ticket.get("qa_assignee"),
+                    "backend_sp": be_sp_prev,
+                    "frontend_sp": fe_sp_prev,
+                    "qa_sp": qa_sp_prev,
+                    "backend_status": prev_ticket.get("backend_status", "NA"),
+                    "frontend_status": prev_ticket.get("frontend_status", "NA"),
+                    "qa_status": prev_ticket.get("qa_status", "NA"),
+                    "backend_start_date": prev_ticket.get("backend_start_date"),
+                    "backend_end_date": prev_ticket.get("backend_end_date"),
+                    "frontend_start_date": prev_ticket.get("frontend_start_date"),
+                    "frontend_end_date": prev_ticket.get("frontend_end_date"),
+                    "qa_start_date": prev_ticket.get("qa_start_date"),
+                    "qa_end_date": prev_ticket.get("qa_end_date"),
+                    "jira_parent_key": parent_key,
+                    "jira_status_push_history": [],
+                })
+                existing_keys.add(jira_key)
+                _fetch_and_cache_comments(sprint_id, jira_key, jira_key)
+                continue
+
+            # New ticket — match assignee and distribute via round-robin
+            matched_name = _match_assignee_by_email(parsed.get("assignee_email"))
+            assignee = matched_name if matched_name else parsed["assignee"]
 
             if is_epic:
                 backend_assignee = frontend_assignee = qa_assignee = None
@@ -264,7 +325,6 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
                 frontend_assignee = assign_round_robin("frontend", team_df, sprint_id)
                 qa_assignee = assign_round_robin("qa", team_df, sprint_id)
 
-            initial_status = _derive_portal_status(jira_status)
             total_sp = parsed["sp"]
             be_sp, fe_sp, qa_sp = _split_sp_for_roles(
                 total_sp, bool(backend_assignee), bool(frontend_assignee), bool(qa_assignee)
@@ -321,5 +381,6 @@ def sync_sprint_from_jira(sprint_id, sprint_name, board_id, base_url):
         }}
     )
 
-    return {"added": added, "skipped": skipped, "skipped_closed": skipped_closed,
+    return {"added": added, "carried_forward": carried_forward,
+            "skipped": skipped, "skipped_closed": skipped_closed,
             "total_jira": len(issues), "errors": errors}

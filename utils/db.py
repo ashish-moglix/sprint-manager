@@ -890,6 +890,42 @@ def get_tickets_by_jira_keys(sprint_id, jira_keys):
     return {t["jira_key"] for t in cursor if t.get("jira_key")}
 
 
+def find_ticket_across_sprints(jira_key, exclude_sprint_id=None):
+    """Find a ticket by jira_key in any sprint for the current team.
+
+    Returns the full ticket document from the most recent sprint (by start_date),
+    or None if not found. Used for spillover carry-forward during sync.
+    """
+    db = get_mongo_db()
+    tid = get_current_team_id()
+    query = {
+        "team_id": str(tid),
+        "jira_key": jira_key,
+    }
+    if exclude_sprint_id:
+        query["sprint_id"] = {"$ne": str(exclude_sprint_id)}
+
+    cursor = db['backlog'].find(query)
+    matches = list(cursor)
+    if not matches:
+        return None
+
+    # Return the ticket from the most recent sprint
+    if len(matches) == 1:
+        return matches[0]
+
+    # Multiple matches — find the one from the latest sprint
+    sprint_ids = [m["sprint_id"] for m in matches]
+    sprints = {
+        str(s["_id"]): s for s in db['sprints'].find({"_id": {"$in": [ObjectId(sid) for sid in sprint_ids]}})
+    }
+    matches.sort(
+        key=lambda m: sprints.get(m["sprint_id"], {}).get("start_date", ""),
+        reverse=True
+    )
+    return matches[0]
+
+
 # --- JIRA USER LINKING ---
 
 def get_user_jira_account_id(user_name):
